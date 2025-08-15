@@ -9143,37 +9143,41 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
       break;
     }
     case ParsedAttr::AT_ScalarStorageOrder: {
-      // Accept only on scalar integer or floating types for now.
-      QualType CurElemType = type;
+      // Accept only on scalar integer or floating types (after peeling array).
+      QualType ElemType = type;
       if (type->getAsArrayTypeUnsafe())
-        CurElemType = state.getSema().Context.getBaseElementType(type);
-
-      if (!CurElemType->isIntegerType() && !CurElemType->isFloatingType()) {
+        ElemType = state.getSema().Context.getBaseElementType(type);
+      if (!ElemType->isIntegerType() && !ElemType->isFloatingType()) {
         diagnoseBadTypeAttribute(state.getSema(), attr, type);
         attr.setInvalid();
         break;
       }
-
-      // Create and attach as an attributed type node.
-      ASTContext &Ctx = state.getSema().Context;
-  ScalarStorageOrderAttr::Endianness Order;
-  // Parse the single string enum argument.
+      // Expect exactly one string argument.
+      if (attr.getNumArgs() != 1) {
+        state.getSema().Diag(attr.getLoc(),
+                             diag::err_attribute_wrong_number_arguments)
+            << attr << 1;
+        attr.setInvalid();
+        break;
+      }
       StringRef OrderStr;
       if (!state.getSema().checkStringLiteralArgumentAttr(attr, 0, OrderStr)) {
         attr.setInvalid();
         break;
       }
+      ScalarStorageOrderAttr::Endianness Order;
       if (!ScalarStorageOrderAttr::ConvertStrToEndianness(OrderStr, Order)) {
         state.getSema().Diag(attr.getLoc(), diag::err_attribute_invalid_argument)
             << attr << OrderStr;
         attr.setInvalid();
         break;
       }
-      auto *A = ScalarStorageOrderAttr::Create(Ctx, Order, attr);
+      ASTContext &Ctx = state.getSema().Context;
+      auto *A = new (Ctx) ScalarStorageOrderAttr(Ctx, attr, Order);
       type = state.getAttributedType(A, type, type);
       attr.setUsedAsTypeAttr();
       break;
-  }
+    }
     }
 
     // Handle attributes that are defined in a macro. We do not want this to be
