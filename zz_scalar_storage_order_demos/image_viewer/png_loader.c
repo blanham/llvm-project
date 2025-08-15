@@ -159,7 +159,12 @@ static int load_png_stream(FILE *f, int manual, int decode_pixels, ImageData *ou
         }
         free(raw);
     }
-    out->pixels=pixels; out->channels=4; (void)gamma_val; (void)have_gamma; (void)srgb_intent; (void)phys_ppux; (void)phys_ppuy; (void)phys_unit; (void)have_phys; (void)crc_mismatch_count; return 0;
+    out->pixels=pixels; out->channels=4;
+    if(getenv("SSO_PNG_META")){
+        fprintf(stderr,"[png-meta] w=%u h=%u interlace=%d gamma=%s srgb_intent=%d phys=%s crc_mismatches=%u\n", w,h,interlace,
+            have_gamma?"yes":"no", srgb_intent, have_phys?"yes":"no", crc_mismatch_count);
+    }
+    return 0;
 fail:
     free(compressed); free(palette); free(trns); return -1;
 }
