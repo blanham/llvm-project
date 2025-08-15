@@ -9150,6 +9150,20 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
         IsArray = true; // Not yet supported: would need propagation to element accesses.
         ElemType = state.getSema().Context.getBaseElementType(type);
       }
+      // Reject vectors explicitly (future: could extend to per-element handling).
+      if (ElemType->isVectorType()) {
+        state.getSema().Diag(attr.getLoc(),
+                             diag::err_attribute_scalar_storage_order_wrong_type);
+        attr.setInvalid();
+        break;
+      }
+      // Reject atomic qualified types for now: atomic lowering occurs before swap logic.
+      if (ElemType->isAtomicType()) {
+        state.getSema().Diag(attr.getLoc(),
+                             diag::err_attribute_scalar_storage_order_wrong_type);
+        attr.setInvalid();
+        break;
+      }
       if (IsArray) {
   state.getSema().Diag(attr.getLoc(),
            diag::err_attribute_scalar_storage_order_wrong_type);
