@@ -161,8 +161,10 @@ static int load_png_stream(FILE *f, int manual, int decode_pixels, ImageData *ou
     }
     out->pixels=pixels; out->channels=4;
     if(getenv("SSO_PNG_META")){
-        fprintf(stderr,"[png-meta] w=%u h=%u interlace=%d gamma=%s srgb_intent=%d phys=%s crc_mismatches=%u\n", w,h,interlace,
-            have_gamma?"yes":"no", srgb_intent, have_phys?"yes":"no", crc_mismatch_count);
+        fprintf(stderr,"[png-meta] w=%u h=%u interlace=%d gamma=%s srgb_intent=%d phys=%s crc_mismatches=%u idat_chunks=%u palette=%u trns=%u adam7=%d\n",
+                w,h,interlace,
+                have_gamma?"yes":"no", srgb_intent, have_phys?"yes":"no", crc_mismatch_count,
+                idat_count, palette_entries, trns_len>0, interlace);
     }
     return 0;
 fail:

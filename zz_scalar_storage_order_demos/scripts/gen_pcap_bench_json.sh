@@ -9,7 +9,12 @@ ROOT_DIR="$SCRIPT_DIR/.."
 PCAP_SRC="$ROOT_DIR/pcap_dump/main.c"
 BIN="/tmp/sso_pcap_dump"
 
-clang -O2 -Wall -Wextra -std=c11 "$PCAP_SRC" -o "$BIN"
+# Allow SAN=1 for ASan/UBSan build
+if [[ "${SAN:-0}" == 1 ]]; then
+  clang -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -std=c11 -Wall -Wextra "$PCAP_SRC" -o "$BIN"
+else
+  clang -O2 -Wall -Wextra -std=c11 "$PCAP_SRC" -o "$BIN"
+fi
 
 echo '{' > "$OUT_JSON"
 echo '  "generated_at": '"$(date +%s)", >> "$OUT_JSON"
@@ -23,6 +28,15 @@ for TRACE in "$@"; do
   "$BIN" "$TRACE" --manual --decode > /dev/null 2>"$MAN_TMP" || true
   ATTR_BENCH=$("$BIN" "$TRACE" --bench=$ITERS 2>/dev/null | grep BENCH | tail -n1 || true)
   MAN_BENCH=$("$BIN" "$TRACE" --manual --bench=$ITERS 2>/dev/null | grep BENCH | tail -n1 || true)
+  ATTR_CYC=null; ATTR_INS=null; MAN_CYC=null; MAN_INS=null
+  if [[ "${PERF:-0}" == 1 && -x "$(command -v perf || echo /nonexistent)" ]]; then
+    PERF_ATTR_OUT=$(perf stat -x, -e cycles,instructions -r 1 "$BIN" "$TRACE" --bench=$ITERS 2>&1 >/dev/null || true)
+    PERF_MAN_OUT=$(perf stat -x, -e cycles,instructions -r 1 "$BIN" "$TRACE" --manual --bench=$ITERS 2>&1 >/dev/null || true)
+    ATTR_CYC=$(echo "$PERF_ATTR_OUT" | awk -F, '/cycles/ {print $1; exit}')
+    ATTR_INS=$(echo "$PERF_ATTR_OUT" | awk -F, '/instructions/ {print $1; exit}')
+    MAN_CYC=$(echo "$PERF_MAN_OUT" | awk -F, '/cycles/ {print $1; exit}')
+    MAN_INS=$(echo "$PERF_MAN_OUT" | awk -F, '/instructions/ {print $1; exit}')
+  fi
   ATTR_PER=$(echo "$ATTR_BENCH" | awk -F'per=' '{print $2}' | awk '{print $1}')
   MAN_PER=$(echo "$MAN_BENCH" | awk -F'per=' '{print $2}' | awk '{print $1}')
   SPEEDUP=null
@@ -45,7 +59,8 @@ PY
     echo '      "manual_per_s": '"${MAN_PER:-null}",'
     echo '      "speedup": '"$SPEEDUP",'
     echo '      "stderr_hash": { "attr": '"""$SHA_ATTR""", "manual": '"""$SHA_MAN"""' },'
-    echo '      "stderr_match": '"$MATCH"''
+  echo '      "stderr_match": '"$MATCH",'
+  echo '      "perf": { "attr": { "cycles": '"${ATTR_CYC:-null}", "instructions": '"${ATTR_INS:-null}"' }, "manual": { "cycles": '"${MAN_CYC:-null}", "instructions": '"${MAN_INS:-null}"' } }'
     echo '    }'
   } >> "$OUT_JSON"
   rm -f "$ATTR_TMP" "$MAN_TMP"

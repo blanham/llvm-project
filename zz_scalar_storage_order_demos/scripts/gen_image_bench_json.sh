@@ -13,10 +13,17 @@ ROOT_DIR="$SCRIPT_DIR/.."
 VIEWER_SRC="$ROOT_DIR/image_viewer/image_main.c"
 VIEWER_BIN="/tmp/sso_image_viewer"
 
-# Build once (attr path; runtime flag toggles manual)
-clang -O2 -Wall -Wextra -std=c11 "$VIEWER_SRC" "$ROOT_DIR/image_viewer/bmp_loader.c" \
-  "$ROOT_DIR/image_viewer/png_loader.c" "$ROOT_DIR/image_viewer/jpeg_loader.c" \
-  "$ROOT_DIR/image_viewer/qoi_loader.c" "$ROOT_DIR/image_viewer/image_common.c" -lm -o "$VIEWER_BIN"
+# Build once (attr path; runtime flag toggles manual). Allow SAN=1 to build with ASan/UBSan.
+if [[ "${SAN:-0}" == 1 ]]; then
+  clang -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -std=c11 -Wall -Wextra \
+    "$VIEWER_SRC" "$ROOT_DIR/image_viewer/bmp_loader.c" \
+    "$ROOT_DIR/image_viewer/png_loader.c" "$ROOT_DIR/image_viewer/jpeg_loader.c" \
+    "$ROOT_DIR/image_viewer/qoi_loader.c" "$ROOT_DIR/image_viewer/image_common.c" -lm -o "$VIEWER_BIN"
+else
+  clang -O2 -Wall -Wextra -std=c11 "$VIEWER_SRC" "$ROOT_DIR/image_viewer/bmp_loader.c" \
+    "$ROOT_DIR/image_viewer/png_loader.c" "$ROOT_DIR/image_viewer/jpeg_loader.c" \
+    "$ROOT_DIR/image_viewer/qoi_loader.c" "$ROOT_DIR/image_viewer/image_common.c" -lm -o "$VIEWER_BIN"
+fi
 
 echo '{' > "$OUT_JSON"
 echo '  "generated_at": '"$(date +%s)", >> "$OUT_JSON"
@@ -41,6 +48,16 @@ for IMG in "$@"; do
   # Bench attr
   ATTR_BENCH=$("$VIEWER_BIN" "$IMG" --bench=$ITERS 2>/dev/null | grep BENCH | tail -n1 || true)
   MAN_BENCH=$("$VIEWER_BIN" "$IMG" --manual --bench=$ITERS 2>/dev/null | grep BENCH | tail -n1 || true)
+  # perf counters (cycles,instructions) if available and PERF=1
+  ATTR_CYC=null; ATTR_INS=null; MAN_CYC=null; MAN_INS=null
+  if [[ "${PERF:-0}" == 1 && -x "$(command -v perf || echo /nonexistent)" ]]; then
+    PERF_ATTR_OUT=$(perf stat -x, -e cycles,instructions -r 1 "$VIEWER_BIN" "$IMG" --bench=$ITERS 2>&1 >/dev/null || true)
+    PERF_MAN_OUT=$(perf stat -x, -e cycles,instructions -r 1 "$VIEWER_BIN" "$IMG" --manual --bench=$ITERS 2>&1 >/dev/null || true)
+    ATTR_CYC=$(echo "$PERF_ATTR_OUT" | awk -F, '/cycles/ {print $1; exit}' )
+    ATTR_INS=$(echo "$PERF_ATTR_OUT" | awk -F, '/instructions/ {print $1; exit}' )
+    MAN_CYC=$(echo "$PERF_MAN_OUT" | awk -F, '/cycles/ {print $1; exit}' )
+    MAN_INS=$(echo "$PERF_MAN_OUT" | awk -F, '/instructions/ {print $1; exit}' )
+  fi
   ATTR_PER=$(echo "$ATTR_BENCH" | awk -F'per=' '{print $2}' | awk '{print $1}')
   MAN_PER=$(echo "$MAN_BENCH" | awk -F'per=' '{print $2}' | awk '{print $1}')
   SPEEDUP="null"
@@ -71,6 +88,8 @@ PY
   echo '      "pixels_match": '"$PIX_MATCH",',' >> "$OUT_JSON"
   echo '      "sha256": { "attr": '"""${SHA_ATTR:-}""", "manual": '"""${SHA_MAN:-}"""' },' >> "$OUT_JSON"
   echo '      "meta": [' >> "$OUT_JSON"
+  echo '      ,' >> "$OUT_JSON"
+  echo '      "perf": { "attr": { "cycles": '"${ATTR_CYC:-null}", "instructions": '"${ATTR_INS:-null}"' }, "manual": { "cycles": '"${MAN_CYC:-null}", "instructions": '"${MAN_INS:-null}"' } }' >> "$OUT_JSON"
   ML_FIRST=1
   while IFS= read -r line; do
     [ -z "$line" ] && continue
