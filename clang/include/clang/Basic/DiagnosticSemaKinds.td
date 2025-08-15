@@ -3306,6 +3306,8 @@ def err_attribute_wrong_arg_count_for_func
 // scalar_storage_order custom wrong-type diagnostic (non-scalar subjects)
 def err_attribute_scalar_storage_order_wrong_type : Error<
   "'scalar_storage_order' attribute only applies to scalar integer or floating types">;
+def err_attribute_conflicting_scalar_storage_order : Error<
+  "'scalar_storage_order' attribute with order '%0' conflicts with previous specification '%1'">;
 def err_attribute_bounds_for_function : Error<
   "%0 attribute references parameter %1, but the function %2 has only %3 parameters">;
 def err_attribute_no_member_function : Error<

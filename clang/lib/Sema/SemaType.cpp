@@ -9196,6 +9196,30 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
         attr.setInvalid();
         break;
       }
+      // Check for an existing scalar_storage_order already applied to this type.
+      if (type->hasAttr(attr::ScalarStorageOrder)) {
+        const AttributedType *AT = nullptr;
+        for (QualType QT = type; (AT = QT->getAs<AttributedType>()); QT = AT->getEquivalentType()) {
+          if (isa<ScalarStorageOrderAttr>(AT->getAttr())) {
+            const auto *Existing = cast<ScalarStorageOrderAttr>(AT->getAttr());
+            if (Existing->getOrder() == Order) {
+              // Duplicate with same argument: ignore silently.
+              attr.setInvalid();
+              break;
+            } else {
+              // Conflicting orders: diagnose error.
+              state.getSema().Diag(attr.getLoc(),
+                                   diag::err_attribute_conflicting_scalar_storage_order)
+                  << ScalarStorageOrderAttr::ConvertEndiannessToStr(Order)
+                  << ScalarStorageOrderAttr::ConvertEndiannessToStr(Existing->getOrder());
+              attr.setInvalid();
+              break;
+            }
+          }
+        }
+        if (attr.isInvalid())
+          break; // Duplicate handled.
+      }
       ASTContext &Ctx = state.getSema().Context;
       auto *A = new (Ctx) ScalarStorageOrderAttr(Ctx, attr, Order);
       type = state.getAttributedType(A, type, type);
