@@ -61,25 +61,56 @@ Not yet addressed / partial:
 - Interop with `std::bit_cast` / aliasing when mixing attributed and plain types — may require additional documentation.
 - Debug info emission (DWARF attribute or annotation) — currently none; consider.
 
-## 4. Detailed Task Breakdown & Test Additions
-| Task | Action | Files (tentative) |
-|------|--------|-------------------|
-|Struct field test| Add CodeGen test struct with attributed typedef field; check single bswap on load/store | `clang/test/CodeGen/scalar-storage-order-struct.c` |
-|Param/return tests| Functions taking / returning attributed types; check swaps | same or new file |
-|Volatile test| Volatile pointer load/store includes one bswap | existing CodeGen test file |
-|Varargs test (optional)| Pass attributed value through varargs, retrieve; ensure one swap each direction | new test |
-|Duplicate attribute policy| In Sema: if second occurrence, emit warning & ignore OR produce error; add negative test | `Sema` test |
-|Vector rejection| Add explicit Sema check & error | `SemaType.cpp` + test |
-|Union / bit-field rejection| Add Sema error (same diagnostic) + tests | tests |
-|_Atomic rejection| Detect `_Atomic(T)` wrapper and reject (or support) | Sema + test |
-|C++ attribute spelling| Add C++ test using `[[gnu::scalar_storage_order("big-endian")]]` | `SemaCXX` & `CodeGenCXX` |
-|Template test| Template alias with attribute; instantiate; check codegen | `CodeGenCXX` |
-|AST print test| Use `-ast-print` or `-ast-dump` to ensure attribute survives typedef sugar | `AST` test |
-|128-bit int| CodeGen test verifying `llvm.bswap.i128` generated | CodeGen |
-|Float16 / long double| If supported, ensure 16-bit swap, skip for 80-bit (no swap emitted) | CodeGen (with target gating) |
-|No-op on matching endian (complete)| Extend existing BE/LE test to cover all widths & floats | modify `scalar-storage-order-more.c` |
-|Release notes| Add section summarizing feature, limitations, feature test macro | `clang/docs/ReleaseNotes.rst` |
-|Documentation refine| Clarify unsupported categories in existing docs entry | `LanguageExtensions.rst` |
+## 4. Execution Order (Commit-by-Commit Task Breakdown)
+Commit 1: Strengthen Sema Rejections
+- Add explicit rejections (vector, union, bit-field, _Atomic) with unified custom diagnostic.
+- Negative tests for each category (C and C++ where relevant).
+
+Commit 2: Duplicate Attribute Policy
+- Implement behavior: second `scalar_storage_order` on same type triggers warning and is ignored (or choose error; current plan = warn+ignore).
+- Tests covering duplicate on typedef, on parameter, and mixed GNU/C++ spellings.
+
+Commit 3: Argument Validation Expansion
+- Negative tests: wrong case ("Big-Endian"), empty string, non-literal, macro expanding to non-string, numeric literal, missing quotes.
+- Ensure diagnostics are specific / consistent.
+
+Commit 4: Struct Field & Param/Return CodeGen
+- CodeGen tests for struct field load/store (single bswap per access when needed).
+- Functions passing and returning attributed types (one swap each boundary, no double).
+
+Commit 5: Extended Width & FP Coverage
+- Add __int128 (if supported) bswap test, ensure i128 intrinsic used.
+- Add half/float/double (already partial) plus guard for long double (80-bit) verifying no unsupported swap.
+- Ensure 8-bit no-swap case explicit.
+
+Commit 6: Volatile & Varargs
+- Volatile load/store test (exactly one swap each side when needed).
+- Varargs pass/receive test ensuring single swap per boundary.
+
+Commit 7: Complete Endian Matrix
+- Extend existing LE/BE tests to cover all widths & FP forms for both matching and differing storage order.
+
+Commit 8: C++ Spelling & Templates
+- Tests with `[[gnu::scalar_storage_order]]` spelling.
+- Template alias / class template with attributed typedef; instantiate & codegen.
+
+Commit 9: AST Print / Dump Stability
+- Add `-ast-print` and/or `-ast-dump` tests verifying attribute appears once, persists through typedef layering.
+
+Commit 10: Release Notes
+- Add entry in `clang/docs/ReleaseNotes.rst` describing feature and limitations.
+
+Commit 11: Documentation Refinement
+- Update `LanguageExtensions.rst` section to enumerate explicit unsupported constructs (arrays, vectors, unions, bit-fields, _Atomic, etc) and duplicate attribute semantics.
+
+Commit 12 (Optional Sanity): Optimization-Level Test
+- Representative `-O2` CodeGen test verifying swaps retained and not doubled.
+
+Optional / Post Series (if reviewers request minimal core first):
+- Could fold commits 5–7 or 6–7 if size is a concern.
+
+Out-of-Scope (Tracked in Section 8 / Deferred Work):
+- Arrays propagation semantics, bit-field layout semantics, atomic lowering, union mixed-endian policies, performance peepholes, debug info.
 
 ## 5. Risk / Edge Cases
 - Double swaps if attribute applied redundantly: need explicit prevention or documented behavior.
@@ -87,15 +118,14 @@ Not yet addressed / partial:
 - Atomic types: currently bypassed (EmitAtomicLoad/Store happens before swap logic) leading to incorrect behavior if allowed — must reject for v1.
 - FP sizes: ensure we never attempt bswap on unsupported widths (80-bit, 128-bit quad if target lacks intrinsic). Current guard enumerates allowed widths.
 
-## 6. Commit Strategy (Upstream)
-Recommended to split into logical, review-friendly commits:
-1. Attr.td + basic docs + Sema parsing (accept only integer/FP) + minimal tests.
-2. CodeGen load/store lowering + CodeGen tests (ints + endian matrix) + TypePrinter.
-3. Extended tests (floats, struct fields, params/returns, 128-bit, no-op cases).
-4. Diagnostics refinement (custom wrong-type, duplicate attr handling) + negative tests.
-5. Documentation expansion + Release notes.
-6. (Optional) Additional C++ / template tests.
-Each commit should build & pass tests independently.
+## 6. Commit Strategy (Upstream Submission View)
+For upstream Phabricator / GitHub review, you may squash or regroup:
+- Patch 1: Core attribute (Attr.td + Sema minimal + CodeGen + basic tests + docs stub).
+- Patch 2: Diagnostics & extended Sema rejections.
+- Patch 3: Expanded CodeGen matrix & struct/param/return.
+- Patch 4: C++ spelling, templates, AST print, documentation & release notes.
+- Patch 5: (Optional) Volatile, varargs, duplicate attribute policy if reviewers want separated.
+Keep local granular commits; rebase/squash into these logical patches before submission.
 
 ## 7. Testing Matrix Overview
 Dimension | Values
@@ -114,13 +144,12 @@ Optimization | -O0, representative -O2 sample
 - Duplicate attribute: error vs. ignore? (Lean toward ignoring with warning like other idempotent attrs.)
 - Feature test macro: add `__has_attribute(scalar_storage_order)` only (no `__has_feature`). Acceptable? (Yes.)
 
-## 9. Immediate Next Local Steps
-1. Add rejection tests & Sema checks for vectors, unions, bit-fields, `_Atomic`.
-2. Add struct field + param/return CodeGen test.
-3. Add duplicate attribute test & implement policy.
-4. Release notes entry.
-5. Expand endian matrix tests (complete coverage). 
-6. AST print / dump test.
+## 9. Immediate Next Local Steps (Working Order)
+1. Commit 1 tasks (Sema rejections + tests).
+2. Commit 2 tasks (duplicate attribute policy + tests).
+3. Commit 3 tasks (argument validation negatives).
+4. Commit 4 tasks (struct field & param/return CodeGen).
+5. Proceed sequentially through Commit 5–9; then docs (10–11); optional optimization test (12).
 
 ## 10. Removal Note
 Delete this file before publishing the cleaned patch series (`git rm SCALAR_STORAGE_ORDER_UPSTREAM_PLAN.md`).
