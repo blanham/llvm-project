@@ -74,7 +74,7 @@ static size_t limit_packets = (size_t)-1;
 static void maybe_spin(void){
     if(!getenv("SSO_DEMO_SPIN")) return; volatile uint64_t x=0; for(int i=0;i<1000;i++) x+=i; }
 
-// Ethernet / IPv4 / TCP / UDP / ARP / minimal DNS / HTTP heuristics.
+// Ethernet / IPv4 / IPv6 / TCP / UDP / ARP / DNS (expanded) / HTTP / TLS SNI / QUIC heuristics.
 
 struct eth_hdr_be_attr { be16 dst_hi; be32 dst_lo_src_hi; be16 src_mid; be16 ethertype; };
 // We'll instead just treat as raw for readability later; proper Ethernet splits are unnecessary here.
@@ -85,6 +85,14 @@ struct ipv4_hdr_be_attr {
     uint8_t ttl; uint8_t proto; be16 hdr_checksum; be32 src; be32 dst;
 };
 
+struct ipv6_hdr_be_attr {
+    be32 v_tc_fl; // version(4) | traffic class(8) | flow label(20)
+    be16 payload_len; uint8_t next_header; uint8_t hop_limit; unsigned char src[16]; unsigned char dst[16];
+};
+
+struct icmpv4_hdr_be_attr { uint8_t type; uint8_t code; be16 checksum; be16 rest0; be16 rest1; };
+struct icmpv6_hdr_be_attr { uint8_t type; uint8_t code; be16 checksum; be32 rest; };
+
 struct tcp_hdr_be_attr { be16 src_port; be16 dst_port; be32 seq; be32 ack; uint8_t off_res; uint8_t flags; be16 win; be16 cksum; be16 urgptr; };
 struct udp_hdr_be_attr { be16 src_port; be16 dst_port; be16 len; be16 cksum; };
 struct arp_hdr_be_attr { be16 htype; be16 ptype; uint8_t hlen; uint8_t plen; be16 oper; };
@@ -92,7 +100,8 @@ struct arp_hdr_be_attr { be16 htype; be16 ptype; uint8_t hlen; uint8_t plen; be1
 static void decode_dns(const unsigned char *payload, size_t len){
     if(len < 12) return; // header
     be16 id; memcpy(&id, payload, 2);
-    printf(" DNS(id=%u)", (unsigned)id);
+    unsigned qd = (payload[4]<<8)|payload[5]; unsigned an=(payload[6]<<8)|payload[7];
+    printf(" DNS(id=%u qd=%u an=%u)", (unsigned)id, qd, an);
 }
 
 static void decode_http(const unsigned char *payload, size_t len){
@@ -100,6 +109,33 @@ static void decode_http(const unsigned char *payload, size_t len){
     if(len<4) return; if(!memcmp(payload, "GET ",4) || !memcmp(payload,"POST",4)) {
         printf(" HTTP(%.*s)", (int)(len>4?4:len), payload);
     }
+}
+
+static void decode_tls_sni(const unsigned char *data, size_t len){
+    // Very minimal TLS ClientHello SNI extraction; expect handshake type 0x01 after record header.
+    if(len < 5) return; // TLS record header
+    if(data[0] != 0x16) return; // Handshake
+    size_t rec_len = ((size_t)data[3]<<8)|data[4]; if(rec_len+5 > len) return;
+    if(len < 5+4) return; // Handshake header
+    const unsigned char *hs = data+5; if(hs[0] != 0x01) return; // ClientHello
+    size_t hs_len = ((size_t)hs[1]<<16)|((size_t)hs[2]<<8)|hs[3]; if(4+hs_len > rec_len) return;
+    size_t p=4; if(p+2>hs_len) return; // skip version
+    p+=2; // version
+    if(p+32>hs_len) return; p+=32; // random
+    if(p>=hs_len) return; uint8_t sid_len=hs[p]; p+=1+sid_len; if(p>hs_len) return;
+    if(p+2>hs_len) return; size_t cs_len = ((size_t)hs[p]<<8)|hs[p+1]; p+=2+cs_len; if(p>hs_len) return;
+    if(p>=hs_len) return; uint8_t comp_methods=hs[p]; p+=1+comp_methods; if(p>hs_len) return;
+    if(p+2>hs_len) return; size_t ext_total = ((size_t)hs[p]<<8)|hs[p+1]; p+=2; if(p+ext_total>hs_len) return;
+    size_t extp=p; while(extp+4 <= p+ext_total){ uint16_t etype=(hs[extp]<<8)|hs[extp+1]; uint16_t elen=(hs[extp+2]<<8)|hs[extp+3]; extp+=4; if(extp+elen>p+ext_total) break; if(etype==0){ // server_name
+            if(elen < 5) break; size_t list_len = (hs[extp]<<8)|hs[extp+1]; size_t sp=extp+2; if(sp+list_len>extp+elen) break; if(sp+3>extp+elen) break; uint8_t name_type=hs[sp]; if(name_type!=0){ /* host_name only */ break; } uint16_t host_len=(hs[sp+1]<<8)|hs[sp+2]; if(sp+3+host_len>extp+elen) break; printf(" TLS(SNI=%.*s)", host_len, (const char*)(hs+sp+3)); break; }
+        extp+=elen; }
+}
+
+static void decode_quic(const unsigned char *data, size_t len){
+    if(len < 6) return; // minimal
+    uint8_t first = data[0]; if((first & 0xC0) != 0xC0) return; // long header
+    uint32_t ver = (data[1]<<24)|(data[2]<<16)|(data[3]<<8)|data[4];
+    printf(" QUIC(ver=%08x)", ver);
 }
 
 static void proto_dispatch(const unsigned char *frame, size_t flen, int is_be){
@@ -122,16 +158,33 @@ static void proto_dispatch(const unsigned char *frame, size_t flen, int is_be){
                 const unsigned char *app = l4 + doff; size_t app_len = l4len - doff;
                 if(dport==80 || sport==80) decode_http(app, app_len);
                 if(dport==53 || sport==53) decode_dns(app, app_len);
+                if(dport==443 || sport==443) decode_tls_sni(app, app_len);
             }
         } else if(ip->proto == 17 && l4len >= 8){ // UDP
             const struct udp_hdr_be_attr *udp = (const struct udp_hdr_be_attr*)l4;
             printf(" UDP(%u->%u)", (unsigned)udp->src_port, (unsigned)udp->dst_port);
             const unsigned char *app = l4 + 8; size_t app_len = l4len - 8;
             if(udp->dst_port==53 || udp->src_port==53) decode_dns(app, app_len);
+            if(udp->dst_port==443 || udp->src_port==443) decode_quic(app, app_len);
+        } else if(ip->proto == 1 && l4len >= 8){ // ICMPv4
+            const struct icmpv4_hdr_be_attr *ic = (const struct icmpv4_hdr_be_attr*)l4;
+            printf(" ICMPv4(type=%u code=%u)", ic->type, ic->code);
         }
     } else if(ethertype == 0x0806 && l3len >= 28){ // ARP
         const struct arp_hdr_be_attr *arp = (const struct arp_hdr_be_attr*)l3;
         printf(" ARP(op=%u)", (unsigned)arp->oper);
+    } else if(ethertype == 0x86DD && l3len >= 40){ // IPv6
+        const struct ipv6_hdr_be_attr *ip6 = (const struct ipv6_hdr_be_attr*)l3;
+        uint32_t v_tc_fl = ip6->v_tc_fl; uint8_t version = (uint8_t)((v_tc_fl>>28)&0xF); if(version!=6) return;
+        printf(" IPv6(nh=%u src=%02x%02x:%02x%02x:%02x%02x:%02x%02x ...)", ip6->next_header,
+               ip6->src[0],ip6->src[1],ip6->src[2],ip6->src[3],ip6->src[4],ip6->src[5],ip6->src[6],ip6->src[7]);
+        const unsigned char *l4 = l3 + 40; size_t l4len = l3len - 40; uint8_t nh=ip6->next_header;
+        if(nh==6 && l4len>=20){ // TCP
+            const struct tcp_hdr_be_attr *tcp = (const struct tcp_hdr_be_attr*)l4;
+            printf(" TCP(%u->%u)", (unsigned)tcp->src_port,(unsigned)tcp->dst_port);
+            size_t doff=(tcp->off_res>>4)*4; if(doff<=l4len){ const unsigned char *app=l4+doff; size_t app_len=l4len-doff; if(tcp->dst_port==443||tcp->src_port==443) decode_tls_sni(app,app_len); }
+        } else if(nh==17 && l4len>=8){ const struct udp_hdr_be_attr *udp=(const struct udp_hdr_be_attr*)l4; printf(" UDP(%u->%u)", (unsigned)udp->src_port,(unsigned)udp->dst_port); const unsigned char *app=l4+8; size_t app_len=l4len-8; if(udp->dst_port==53||udp->src_port==53) decode_dns(app,app_len); if(udp->dst_port==443||udp->src_port==443) decode_quic(app,app_len); }
+        else if(nh==58 && l4len>=4){ const struct icmpv6_hdr_be_attr *ic6=(const struct icmpv6_hdr_be_attr*)l4; printf(" ICMPv6(type=%u code=%u)", ic6->type, ic6->code); }
     }
 }
 

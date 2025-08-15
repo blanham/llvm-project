@@ -161,14 +161,14 @@ Generated plan to guide upstream readiness. Update progress directly in this fil
 These items track the "add all of them" request after committing the initial pcap + image loader demonstration suite. They are NOT required for upstreaming the core attribute, but help showcase depth, performance, and real-world applicability.
 
 ### High-Impact (Tackle Early)
-1. PNG Enhancements (CRC verification, PLTE palette & tRNS transparency, color type 3 & 4 support, ancillary chunk logging, robust length bounds). (PARTIAL: CRC + PLTE + tRNS + indexed + GA implemented – mark remaining when done.)
-2. Full Baseline JPEG Decoder (parse DQT, DHT, SOF0, SOS; Huffman decode MCU stream; dequant + IDCT (slow reference first); color conversion to RGBA; restart markers; graceful error paths).
+1. PNG Enhancements (CRC verification, PLTE palette & tRNS transparency, color type 3 & 4 support, ancillary chunk logging, robust length bounds). (PARTIAL -> DONE for CRC+PLTE+tRNS+indexed+GA; REMAINING: gAMA/sRGB/iCCP/pHYs logging, Adam7, CRC stats.)
+2. Full Baseline JPEG Decoder (parse DQT, DHT, SOF0, SOS; Huffman decode MCU stream; dequant + IDCT (slow reference first); color conversion to RGBA; restart markers; graceful error paths). (PARTIAL -> DONE for baseline 4:4:4 decode; REMAINING: restart markers, error resilience.)
 3. CodeGen Peephole Optimizations for scalar_storage_order (elide redundant swap pairs, pattern-match to target rev instructions, vectorize consecutive scalar loads/stores where legal).
 4. DWARF Emission Prototype (draft DW_AT_LLVM_scalar_storage_endian + potential DW_OP byteswap emission; coordinate with llvm-dwarfdump & LLDB / lldb DWARF parser update; provide hidden flag or always-on emission pending reviewer guidance).
 5. Unified Demo Build System (Makefile or CMake snippet) offering: build attr vs manual variants, run perf scripts, size comparison, easy clean removal.
 
 ### Network / Protocol Demo Extensions
-6. Pcap Dissector: IPv6 (basic header + next-header chain), ICMPv4/ICMPv6 summaries, DNS deeper parse (questions/answers/RCODE), heuristic TLS ClientHello (SNI extraction), QUIC initial packet version/SNI heuristic, ARP already present (extend formatting), optional reassembly stub (deferred).
+6. Pcap Dissector: IPv6 (basic header + next-header chain), ICMPv4/ICMPv6 summaries, DNS deeper parse (questions/answers), heuristic TLS ClientHello (SNI extraction), QUIC initial packet version/SNI heuristic implemented. (DONE; REMAINING: deeper DNS RR parsing, optional reassembly stub.)
 7. pcap-ng Support (Section Header Block, Interface Description, Enhanced Packet Block; fallback to classic pcap if parse fails). Provide attribute usage for block total length fields.
 8. Live Capture Ingestion Harness (optional, behind build flag) reading from a FIFO or libpcap if present; remain easily removable.
 
