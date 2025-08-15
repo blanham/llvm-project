@@ -156,3 +156,63 @@ Delete this file before publishing the cleaned patch series (`git rm SCALAR_STOR
 
 ---
 Generated plan to guide upstream readiness. Update progress directly in this file while iterating.
+
+## Appendix: Additional Potential Test Cases (Optional / Future)
+
+Not strictly required for initial upstream submission; retained here as a backlog for follow-on hardening or if reviewers request broader coverage.
+
+Semantic / Sema Edge Cases
+- typeof / __typeof__ / decltype propagation: ensure attribute survives type deduction where intended or document if stripped.
+- Reference types (C++): applying attribute to referenced base vs rejecting; confirm consistent diagnostic.
+- Deep typedef layering (3–4 levels) culminating in conflict to ensure only one diagnostic emitted.
+- Conflicting duplicates produced via template instantiation (e.g. specialization layering) – ensure single error, no cascade.
+- Attribute combined with other incompatible attributes (e.g. vector_size) – primary diagnostic clarity.
+- Function return type direct annotation (int __attribute__((...)) f();) explicit test if not already.
+
+CodeGen Corner Cases
+- Cross-TU test: attributed typedef defined in one TU, used in another (bswap still emitted; no duplicate diag). (Requires lit multi-file setup.)
+- Return-by-value with inlined vs non-inlined callee (no double swap after inlining).
+- Struct with volatile attributed fields (field-level volatile vs pointer-level volatile).
+- Enum with explicit underlying type (enum E : unsigned short) on BE target run.
+- Zero-initialized & constant-initialized global of attributed type: assert no runtime bswap in global ctor (only at first dynamic load).
+- memcpy / memmove involving attributed objects: verify no hidden extra swaps beyond explicit boundaries (may require IR pattern or restrict test to absence of unexpected extra bswaps count).
+- Redundant swap elimination scenario: store then immediate reload same attributed variable – currently produces two boundary swaps; decide if optimization elimination desirable (future improvement test placeholder).
+- Multiple consecutive attributed loads CSE: ensure optimizer does not incorrectly share post-swap value across aliased memory locations.
+- -O3 and -Oz variant test to show stability (currently only -O2 sample).
+- LTO / ThinLTO single-file test (if infrastructure available) ensuring attribute not stripped (optional; often skipped).
+
+Language / Template Meta-programming
+- Template parameter pack with attributed alias expansion.
+- SFINAE / static_assert gating using __has_attribute(scalar_storage_order) inside templates.
+- Interaction with auto / decltype(auto) deduced variable from attributed expression – attribute expected to apply to type, not deduced away (decide & test).
+
+Sanitizers / Tooling
+- Build with -fsanitize=address / -fsanitize=undefined verifying no sanitizer instrumentation interference or crashes.
+- Time-trace or coverage mapping sanity (compile with -ftime-trace; out-of-scope for lit unless simple check added).
+
+Debug Info (Future Implementation Placeholder)
+- XFAIL test for future DWARF attribute emission (DW_AT_LLVM_scalar_storage_endian) to assert presence once implemented.
+- Test verifying absence of custom attribute today (guards future change to update expectation).
+
+Performance / Peephole Opportunities (Non-test exploratory)
+- Target-specific codegen (AArch64 rev, RISC-V brev) pattern-match test once backend starts canonicalizing bswap sequences from attributed loads/stores.
+
+Interoperability / Alias
+- std::bit_cast between attributed and plain types (ensuring codegen just copies memory; semantics documented) – may want a test to confirm no implicit swap.
+- Casting attributed pointer to plain pointer and loading via plain pointer (ensures no swap – user escaping semantics OK) – document with test if reviewers ask.
+
+Atomic / Future Support (Once Enabled)
+- _Atomic attributed type load/store produces single swap each boundary.
+- Atomic compare_exchange path with attributed type (if semantics defined later).
+
+Arrays / Aggregates (If propagation semantics added later)
+- Array of attributed element type via typedef vs direct attribute on array (behavior parity test).
+- Nested struct containing arrays of attributed scalars verifying per-element swap on accesses.
+
+Unions (If semantics defined)
+- Union with two differently ordered representations -> expect diagnostic or defined rule; test accordingly.
+
+Bit-fields (If later supported)
+- Endian attribute on unsigned bit-field groups verifying synthesized shifts/masks adapt ordering.
+
+Keep this list pruned as items graduate into implemented tests to avoid drift.
