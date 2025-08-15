@@ -5,15 +5,18 @@
 
 #include <stdint.h>
 
-// Big-endian storage order scalars
+// Big & little endian storage order scalars (attribute can be disabled with NO_SSO_ATTR for size/compile comparisons)
+#ifndef NO_SSO_ATTR
 typedef uint16_t __attribute__((scalar_storage_order("big-endian"))) be16;
 typedef uint32_t __attribute__((scalar_storage_order("big-endian"))) be32;
 typedef uint64_t __attribute__((scalar_storage_order("big-endian"))) be64;
-
-// Little-endian storage order scalars
 typedef uint16_t __attribute__((scalar_storage_order("little-endian"))) le16;
 typedef uint32_t __attribute__((scalar_storage_order("little-endian"))) le32;
 typedef uint64_t __attribute__((scalar_storage_order("little-endian"))) le64;
+#else
+typedef uint16_t be16; typedef uint32_t be32; typedef uint64_t be64;
+typedef uint16_t le16; typedef uint32_t le32; typedef uint64_t le64;
+#endif
 
 // Manual helpers
 static inline uint16_t mz_bswap16(uint16_t v){ return (uint16_t)((v<<8)|(v>>8)); }
