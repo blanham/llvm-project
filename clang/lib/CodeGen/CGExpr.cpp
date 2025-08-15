@@ -2082,7 +2082,47 @@ llvm::Value *CodeGenFunction::EmitLoadOfScalar(Address Addr, bool Volatile,
 
   maybeAttachRangeForLoad(Load, Ty, Loc);
 
-  return EmitFromMemory(Load, Ty);
+  llvm::Value *V = EmitFromMemory(Load, Ty);
+
+  // If the type has the scalar_storage_order attribute and it differs from
+  // the target's native endianness, apply a byte swap on the scalar value.
+  if (Ty->hasAttr(attr::ScalarStorageOrder)) {
+    bool IsLittleTarget = CGM.getDataLayout().isLittleEndian();
+    // Find the attributed type carrying ScalarStorageOrder.
+    const AttributedType *AT = nullptr;
+    for (QualType QT = Ty; (AT = QT->getAs<AttributedType>()); QT = AT->getEquivalentType()) {
+      if (isa<ScalarStorageOrderAttr>(AT->getAttr()))
+        break;
+    }
+    const auto *SSO = AT ? dyn_cast<ScalarStorageOrderAttr>(AT->getAttr()) : nullptr;
+    if (SSO) {
+      bool IsLittleStorage =
+          SSO->getOrder() == ScalarStorageOrderAttr::Endianness::LittleEndian;
+
+      if (IsLittleStorage != IsLittleTarget) {
+        llvm::Type *VTy = V->getType();
+        if (VTy->isIntegerTy()) {
+          unsigned BW = VTy->getIntegerBitWidth();
+          if (BW > 8) {
+            llvm::Function *Bswap = CGM.getIntrinsic(llvm::Intrinsic::bswap, VTy);
+            V = Builder.CreateCall(Bswap, V, "byteswap");
+          }
+        } else if (VTy->isFloatingPointTy()) {
+          // Bitcast to integer of same size, bswap, then cast back.
+          unsigned BW = VTy->getPrimitiveSizeInBits();
+          if (BW == 16 || BW == 32 || BW == 64 || BW == 128) {
+            llvm::Type *ITy = llvm::IntegerType::get(getLLVMContext(), BW);
+            llvm::Value *IV = Builder.CreateBitCast(V, ITy);
+            llvm::Function *Bswap = CGM.getIntrinsic(llvm::Intrinsic::bswap, ITy);
+            IV = Builder.CreateCall(Bswap, IV, "byteswap");
+            V = Builder.CreateBitCast(IV, VTy);
+          }
+        }
+      }
+    }
+  }
+
+  return V;
 }
 
 /// Converts a scalar value from its primary IR type (as returned
@@ -2205,6 +2245,43 @@ void CodeGenFunction::EmitStoreOfScalar(llvm::Value *Value, Address Addr,
       }
       if (Addr.getElementType() != SrcTy)
         Addr = Addr.withElementType(SrcTy);
+    }
+  }
+
+  // If the type has the scalar_storage_order attribute and it differs from
+  // the target's native endianness, apply a byte swap before storing.
+  if (Ty->hasAttr(attr::ScalarStorageOrder)) {
+    bool IsLittleTarget = CGM.getDataLayout().isLittleEndian();
+    const AttributedType *AT = nullptr;
+    for (QualType QT = Ty; (AT = QT->getAs<AttributedType>()); QT = AT->getEquivalentType()) {
+      if (isa<ScalarStorageOrderAttr>(AT->getAttr()))
+        break;
+    }
+    if (AT) {
+      const auto *SSO = dyn_cast<ScalarStorageOrderAttr>(AT->getAttr());
+      if (SSO) {
+        bool IsLittleStorage =
+            SSO->getOrder() == ScalarStorageOrderAttr::Endianness::LittleEndian;
+        if (IsLittleStorage != IsLittleTarget) {
+          llvm::Type *VTy = Value->getType();
+          if (VTy->isIntegerTy()) {
+            unsigned BW = VTy->getIntegerBitWidth();
+            if (BW > 8) {
+              llvm::Function *Bswap = CGM.getIntrinsic(llvm::Intrinsic::bswap, VTy);
+              Value = Builder.CreateCall(Bswap, Value, "byteswap");
+            }
+          } else if (VTy->isFloatingPointTy()) {
+            unsigned BW = VTy->getPrimitiveSizeInBits();
+            if (BW == 16 || BW == 32 || BW == 64 || BW == 128) {
+              llvm::Type *ITy = llvm::IntegerType::get(getLLVMContext(), BW);
+              llvm::Value *IV = Builder.CreateBitCast(Value, ITy);
+              llvm::Function *Bswap = CGM.getIntrinsic(llvm::Intrinsic::bswap, ITy);
+              IV = Builder.CreateCall(Bswap, IV, "byteswap");
+              Value = Builder.CreateBitCast(IV, VTy);
+            }
+          }
+        }
+      }
     }
   }
 

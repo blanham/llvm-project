@@ -398,6 +398,9 @@ class ClangGCC<string name, bit allowInC = 1, int version = 1>
 // HLSL Annotation spellings
 class HLSLAnnotation<string name> : Spelling<name, "HLSLAnnotation">;
 
+// (moved ScalarStorageOrder attr definition further below after TypeAttr base
+// is declared)
+
 class Accessor<string name, list<Spelling> spellings> {
   string Name = name;
   list<Spelling> Spellings = spellings;
@@ -778,6 +781,21 @@ class DeclOrStmtAttr : InheritableAttr;
 
 /// An attribute class for HLSL Annotations.
 class HLSLAnnotationAttr : InheritableAttr;
+
+// GCC-compatible type attribute to indicate the storage byte order for
+// scalars. Syntax examples:
+//  - __attribute__((scalar_storage_order("little-endian")))
+//  - __attribute__((scalar_storage_order("big-endian")))
+//  - [[gnu::scalar_storage_order("little-endian")]]
+// This attribute is a type attribute and is intended for scalar integer and
+// floating-point types (and typedefs thereof).
+def ScalarStorageOrder : TypeAttr {
+  let Spellings = [GCC<"scalar_storage_order">];
+  let Args = [EnumArgument<"Order", "Endianness", /*is_string=*/true,
+                            ["little-endian", "big-endian"],
+                            ["LittleEndian", "BigEndian"]>];
+  let Documentation = [Undocumented];
+}
 
 /// A target-specific attribute.  This class is meant to be used as a mixin
 /// with InheritableAttr or Attr depending on the attribute's needs.

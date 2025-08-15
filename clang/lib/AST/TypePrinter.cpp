@@ -2157,6 +2157,13 @@ void TypePrinter::printAttributedAfter(const AttributedType *T,
   case attr::CFISalt:
     OS << "cfi_salt(\"" << cast<CFISaltAttr>(T->getAttr())->getSalt() << "\")";
     break;
+  case attr::ScalarStorageOrder: {
+    const auto *A = cast<ScalarStorageOrderAttr>(T->getAttr());
+    OS << "scalar_storage_order(\""
+       << ScalarStorageOrderAttr::ConvertEndiannessToStr(A->getOrder())
+       << "\")";
+    break;
+  }
   }
   OS << "))";
 }
