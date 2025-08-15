@@ -35,3 +35,10 @@ Validation & Profiling Ideas:
   perf stat -e cycles,instructions ./pcap_dump trace.pcap --bench=200
 
 Removal Reminder: Delete zz_scalar_storage_order_demos/ before creating upstream patch series.
+
+Pixel Equivalence Acceptance Test:
+  After building modular image demo (image_main), verify attributed vs manual pixel identity:
+    scripts/compare_pixels.sh path/to/image.png
+  Add --visual to emit PNGs and an ImageMagick compare diff image if mismatch.
+  Internally uses --dump-raw on both code paths and SHA-256 compares RGBA output.
+  Supports BMP, PNG (non-interlaced 8-bit), QOI, and baseline JPEG 4:4:4. Unsupported sampling or modes fail fast.
