@@ -14,7 +14,7 @@ Implemented pieces:
 - Tests: Initial CodeGen (16/32), extended CodeGen (16/32/64, floats, big-endian target), Sema positive & negative diagnostics, docs entry in `LanguageExtensions.rst`.
 - Custom diagnostic for wrong subject type.
 
-Not yet addressed / partial:
+Not yet addressed / partial (updated after modular benchmark & aggregation infra added):
 - Struct field & parameter/return propagation tests.
 - Varargs / passing through ellipsis.
 - Atomic, volatile, bit-field, union semantics.
@@ -145,11 +145,23 @@ Optimization | -O0, representative -O2 sample
 - Feature test macro: add `__has_attribute(scalar_storage_order)` only (no `__has_feature`). Acceptable? (Yes.)
 
 ## 9. Immediate Next Local Steps (Working Order)
-1. Commit 1 tasks (Sema rejections + tests).
-2. Commit 2 tasks (duplicate attribute policy + tests).
-3. Commit 3 tasks (argument validation negatives).
-4. Commit 4 tasks (struct field & param/return CodeGen).
-5. Proceed sequentially through Commit 5–9; then docs (10–11); optional optimization test (12).
+Core Attribute Upstream Track (compiler/tests):
+1. Sema rejections + diagnostics expansion (arrays, vectors, unions, bit-fields, _Atomic) + tests.
+2. Duplicate attribute policy (warn+ignore) + tests.
+3. Argument validation negative cases.
+4. Struct field & param/return CodeGen coverage tests.
+5. Extended width & FP coverage (__int128, _Float16 where supported) + 8-bit no-op explicit.
+6. Volatile + varargs boundary swap tests.
+7. Complete endian matrix (LE/BE) for all widths & FP.
+8. C++ spelling + templates + AST print/dump tests.
+9. Release notes entry + LanguageExtensions update + feature test macro docs.
+10. Optimization level sample (-O2) ensuring stable swaps.
+
+Demo / Paper Support (parallel, optional for upstream patch but feeds report):
+A. Malformed corpus harness + robustness stats.
+B. Big-endian runtime validation harness (QEMU) evidence capture.
+C. Disassembly diff & code size stats integration into report (using build_size_time + new script TBD).
+D. Productivity metrics collector script for AI-assisted engineering section.
 
 ## 10. Removal Note
 Delete this file before publishing the cleaned patch series (`git rm SCALAR_STORAGE_ORDER_UPSTREAM_PLAN.md`).
@@ -161,9 +173,9 @@ Generated plan to guide upstream readiness. Update progress directly in this fil
 These items track the "add all of them" request after committing the initial pcap + image loader demonstration suite. They are NOT required for upstreaming the core attribute, but help showcase depth, performance, and real-world applicability.
 
 ### High-Impact (Tackle Early)
-1. MiniFB (or window) Integration (moved up) to live-preview decoded images (`--view`) with fallback to PPM output when MiniFB absent. (NEW PRIORITY)
-2. PNG Enhancements (CRC verification, PLTE palette & tRNS transparency, color type 3 & 4 support, ancillary chunk logging, robust length bounds). (PARTIAL -> DONE for CRC+PLTE+tRNS+indexed+GA; REMAINING: gAMA/sRGB/iCCP/pHYs logging, Adam7, CRC stats.)
-3. Full Baseline JPEG Decoder (parse DQT, DHT, SOF0, SOS; Huffman decode MCU stream; dequant + IDCT (slow reference first); color conversion to RGBA; restart markers; graceful error paths). (PARTIAL -> DONE for baseline 4:4:4 decode; REMAINING: restart markers, sampling (4:2:0), error resilience.)
+1. MiniFB (or window) Integration (moved up) to live-preview decoded images (`--view`) with fallback to PPM output when MiniFB absent. (NEW PRIORITY) 
+2. PNG Enhancements (CRC verification, PLTE palette & tRNS transparency, color type 3 & 4 support, ancillary chunk logging, robust length bounds). (DONE: CRC+PLTE+tRNS+indexed+GA+ancillary(gAMA,sRGB,pHYs,iCCP hdr)+Adam7+CRC stats var)
+3. Full Baseline JPEG Decoder (parse DQT, DHT, SOF0, SOS; Huffman decode MCU stream; dequant + IDCT (slow reference first); color conversion to RGBA; restart markers; graceful error paths). (DONE baseline 4:4:4 + restart markers + 4:2:0 sampling; REMAINING: progressive detect/skip, error resilience improvements, quality upsampling) 
 4. CodeGen Peephole Optimizations for scalar_storage_order (elide redundant swap pairs, pattern-match to target rev instructions, vectorize consecutive scalar loads/stores where legal).
 5. DWARF Emission Prototype (draft DW_AT_LLVM_scalar_storage_endian + potential DW_OP byteswap emission; coordinate with llvm-dwarfdump & LLDB / lldb DWARF parser update; provide hidden flag or always-on emission pending reviewer guidance).
 6. Unified Demo Build System (Makefile or CMake snippet) offering: build attr vs manual variants, run perf scripts, size comparison, easy clean removal.
@@ -174,10 +186,8 @@ These items track the "add all of them" request after committing the initial pca
 8. Live Capture Ingestion Harness (optional, behind build flag) reading from a FIFO or libpcap if present; remain easily removable.
 
 ### Image Demo Extensions
-9. PNG: Adam7 interlace support; ancillary chunks of interest (gAMA, sRGB, iCCP (parse header only), pHYs); CRC failure statistics mode; memory safety fuzz harness.
-10. JPEG: Progressive JPEG (SOF2) detection (graceful skip) + restart marker handling; experimental SIMD (platform-guarded) IDCT micro-optimization (after correctness baseline) keeping attr usage in header parsing.
-11. Additional Formats (if time): TGA (uncompressed 24/32), simple uncompressed TIFF baseline (endian tag interplay demonstration), maybe little-endian BMP variant cross-check demonstrating attribute elimination of manual swaps.
-12. (Moved to High-Impact #1) MiniFB integration.
+9. PNG: Adam7 interlace support; ancillary chunks of interest (gAMA, sRGB, iCCP (parse header only), pHYs); CRC failure statistics mode; memory safety fuzz harness. (DONE except fuzz harness) 
+10. JPEG: Progressive JPEG (SOF2) detection (graceful skip) + restart marker handling; experimental SIMD (platform-guarded) IDCT micro-optimization (after correctness baseline) keeping attr usage in header parsing. (PARTIAL -> restart markers + 4:2:0 done; REMAINING: progressive skip + SIMD + better upsample)
 
 ### Testing / Tooling Hardening
 13. Sanitizer Runs (ASan/UBSan) scripts over demos attr vs manual to validate no swap-induced UB.
