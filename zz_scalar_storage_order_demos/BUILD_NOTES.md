@@ -42,3 +42,8 @@ Pixel Equivalence Acceptance Test:
   Add --visual to emit PNGs and an ImageMagick compare diff image if mismatch.
   Internally uses --dump-raw on both code paths and SHA-256 compares RGBA output.
   Supports BMP, PNG (non-interlaced 8-bit), QOI, and baseline JPEG 4:4:4. Unsupported sampling or modes fail fast.
+
+  Test Image Fetching:
+    Use scripts/fetch_test_images.sh to download openly licensed sample images (LLVM logo, Rick Astley 2014 CC BY-SA 4.0, Steve Jobs headshot CC BY-SA 3.0, public domain painting, etc.).
+    Images are not stored in the repository; they are fetched on demand and converted (via ImageMagick) to BMP/PNG (and QOI if supported) for pixel equivalence tests.
+    Ensure attribution is retained if re-distributing converted CC BY-SA artifacts; script prints attribution summary.
