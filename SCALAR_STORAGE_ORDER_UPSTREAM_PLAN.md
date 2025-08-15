@@ -161,11 +161,12 @@ Generated plan to guide upstream readiness. Update progress directly in this fil
 These items track the "add all of them" request after committing the initial pcap + image loader demonstration suite. They are NOT required for upstreaming the core attribute, but help showcase depth, performance, and real-world applicability.
 
 ### High-Impact (Tackle Early)
-1. PNG Enhancements (CRC verification, PLTE palette & tRNS transparency, color type 3 & 4 support, ancillary chunk logging, robust length bounds). (PARTIAL -> DONE for CRC+PLTE+tRNS+indexed+GA; REMAINING: gAMA/sRGB/iCCP/pHYs logging, Adam7, CRC stats.)
-2. Full Baseline JPEG Decoder (parse DQT, DHT, SOF0, SOS; Huffman decode MCU stream; dequant + IDCT (slow reference first); color conversion to RGBA; restart markers; graceful error paths). (PARTIAL -> DONE for baseline 4:4:4 decode; REMAINING: restart markers, error resilience.)
-3. CodeGen Peephole Optimizations for scalar_storage_order (elide redundant swap pairs, pattern-match to target rev instructions, vectorize consecutive scalar loads/stores where legal).
-4. DWARF Emission Prototype (draft DW_AT_LLVM_scalar_storage_endian + potential DW_OP byteswap emission; coordinate with llvm-dwarfdump & LLDB / lldb DWARF parser update; provide hidden flag or always-on emission pending reviewer guidance).
-5. Unified Demo Build System (Makefile or CMake snippet) offering: build attr vs manual variants, run perf scripts, size comparison, easy clean removal.
+1. MiniFB (or window) Integration (moved up) to live-preview decoded images (`--view`) with fallback to PPM output when MiniFB absent. (NEW PRIORITY)
+2. PNG Enhancements (CRC verification, PLTE palette & tRNS transparency, color type 3 & 4 support, ancillary chunk logging, robust length bounds). (PARTIAL -> DONE for CRC+PLTE+tRNS+indexed+GA; REMAINING: gAMA/sRGB/iCCP/pHYs logging, Adam7, CRC stats.)
+3. Full Baseline JPEG Decoder (parse DQT, DHT, SOF0, SOS; Huffman decode MCU stream; dequant + IDCT (slow reference first); color conversion to RGBA; restart markers; graceful error paths). (PARTIAL -> DONE for baseline 4:4:4 decode; REMAINING: restart markers, sampling (4:2:0), error resilience.)
+4. CodeGen Peephole Optimizations for scalar_storage_order (elide redundant swap pairs, pattern-match to target rev instructions, vectorize consecutive scalar loads/stores where legal).
+5. DWARF Emission Prototype (draft DW_AT_LLVM_scalar_storage_endian + potential DW_OP byteswap emission; coordinate with llvm-dwarfdump & LLDB / lldb DWARF parser update; provide hidden flag or always-on emission pending reviewer guidance).
+6. Unified Demo Build System (Makefile or CMake snippet) offering: build attr vs manual variants, run perf scripts, size comparison, easy clean removal.
 
 ### Network / Protocol Demo Extensions
 6. Pcap Dissector: IPv6 (basic header + next-header chain), ICMPv4/ICMPv6 summaries, DNS deeper parse (questions/answers), heuristic TLS ClientHello (SNI extraction), QUIC initial packet version/SNI heuristic implemented. (DONE; REMAINING: deeper DNS RR parsing, optional reassembly stub.)
@@ -176,7 +177,7 @@ These items track the "add all of them" request after committing the initial pca
 9. PNG: Adam7 interlace support; ancillary chunks of interest (gAMA, sRGB, iCCP (parse header only), pHYs); CRC failure statistics mode; memory safety fuzz harness.
 10. JPEG: Progressive JPEG (SOF2) detection (graceful skip) + restart marker handling; experimental SIMD (platform-guarded) IDCT micro-optimization (after correctness baseline) keeping attr usage in header parsing.
 11. Additional Formats (if time): TGA (uncompressed 24/32), simple uncompressed TIFF baseline (endian tag interplay demonstration), maybe little-endian BMP variant cross-check demonstrating attribute elimination of manual swaps.
-12. MiniFB (or similar tiny framebuffer) Integration to display decoded images (optional runtime) with fallback to writing PPM/PNG via a tiny encoder.
+12. (Moved to High-Impact #1) MiniFB integration.
 
 ### Testing / Tooling Hardening
 13. Sanitizer Runs (ASan/UBSan) scripts over demos attr vs manual to validate no swap-induced UB.

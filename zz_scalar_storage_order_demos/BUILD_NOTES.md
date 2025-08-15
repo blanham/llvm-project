@@ -47,3 +47,7 @@ Pixel Equivalence Acceptance Test:
     Use scripts/fetch_test_images.sh to download openly licensed sample images (LLVM logo, Rick Astley 2014 CC BY-SA 4.0, Steve Jobs headshot CC BY-SA 3.0, public domain painting, etc.).
     Images are not stored in the repository; they are fetched on demand and converted (via ImageMagick) to BMP/PNG (and QOI if supported) for pixel equivalence tests.
     Ensure attribution is retained if re-distributing converted CC BY-SA artifacts; script prints attribution summary.
+
+  Viewing Decoded Images:
+    Build image_main with -DWITH_MINIFB and MiniFB headers in include path to enable --view (ephemeral window display).
+    Without MiniFB, use --ppm=out.ppm to dump a viewable PPM for quick inspection.
