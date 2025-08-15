@@ -291,7 +291,6 @@ of these namespaces can be specified with a preceding and following ``__``
 instance, ``gnu::__const__`` can be used instead of ``gnu::const``.
 
 ``__has_c_attribute``
----------------------
 
 This function-like macro takes a single argument that is the name of an
 attribute exposed with the double square-bracket syntax in C mode. The argument
@@ -301,6 +300,20 @@ current compilation target, this macro evaluates to 0. It can be used like this:
 
 .. code-block:: c
 
+
+Proposed (draft) DWARF extensions for future discussion:
+
+* ``DW_AT_LLVM_scalar_storage_endian``: Form ``DW_FORM_data1`` enum with values
+  0 = native (implicit / omitted), 1 = little, 2 = big. Attached to a
+  ``DW_TAG_base_type`` or ``DW_TAG_typedef`` describing the attributed type.
+* ``DW_OP_LLVM_byteswap``: Stack opcode (no operand) indicating that the
+  preceding value in the DWARF expression should be interpreted after a host ↔
+  opposite-endian byte permutation based on its byte size. Intended only for
+  scalar integral / FP types where size ∈ {2,4,8,16}. Enables representing a
+  variable as "raw memory then swap" without altering underlying location.*
+
+(* Either attribute or operator alone would suffice; attribute is simpler for
+ display logic; operator offers composability if future transforms compose.)
   #ifndef __has_c_attribute         // Optional of course.
     #define __has_c_attribute(x) 0  // Compatibility with non-clang compilers.
   #endif
