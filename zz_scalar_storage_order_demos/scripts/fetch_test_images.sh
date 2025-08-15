@@ -20,8 +20,17 @@ fetch() {
 }
 
 # Sources (direct file URLs from Wikimedia commons original sizes)
-fetch "https://upload.wikimedia.org/wikipedia/commons/2/27/LLVM_logo.png" LLVM_logo.png
-fetch "https://upload.wikimedia.org/wikipedia/commons/3/3e/Rick_Astley_performing_at_Let%27s_Rock_Bristol%2C_2014.jpg" rick_astley_2014.jpg
+# Updated LLVM logo URL (previous commons path 404'd). If this ever breaks again,
+# search Wikipedia for latest logo file name and adjust.
+fetch "https://upload.wikimedia.org/wikipedia/en/d/dd/LLVM_logo.png" LLVM_logo.png
+# Rick Astley performance photo (CC BY-SA 4.0) – original filename changed occasionally; try primary then fallback
+if ! fetch "https://upload.wikimedia.org/wikipedia/commons/3/3e/Rick_Astley_performing_at_Let%27s_Rock_Bristol%2C_2014.jpg" rick_astley_2014.jpg; then
+  # Try higher-res 1024px thumb variant
+  if ! fetch "https://upload.wikimedia.org/wikipedia/commons/thumb/0/06/Rick_Astley_performing_at_Let%27s_Rock_Bristol%2C_2014.jpg/1024px-Rick_Astley_performing_at_Let%27s_Rock_Bristol%2C_2014.jpg" rick_astley_2014.jpg; then
+    # Fallback to 640px variant if 1024px also missing
+    fetch "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3e/Rick_Astley_performing_at_Let%27s_Rock_Bristol%2C_2014.jpg/640px-Rick_Astley_performing_at_Let%27s_Rock_Bristol%2C_2014.jpg" rick_astley_2014.jpg || true
+  fi
+fi
 fetch "https://upload.wikimedia.org/wikipedia/commons/8/85/Steve_Jobs_Headshot_2010-CROP_%28cropped_2%29.jpg" steve_jobs_headshot.jpg
 fetch "https://upload.wikimedia.org/wikipedia/commons/4/4d/Feeding_the_chickens%2C_by_Walter_Frederick_Osborne.jpg" chickens_painting.jpg
 
