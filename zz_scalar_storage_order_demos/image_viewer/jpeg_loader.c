@@ -2,10 +2,12 @@
 // segment length and dimension fields. Supports:
 //   - Baseline SOF0, 8-bit precision
 //   - 3 component YCbCr 4:4:4 sampling (all H=1,V=1)
+//   - ALSO 3 component YCbCr 4:2:0 (Y: H=2,V=2; Cb/Cr:1,1) with crude nearest chroma upsample
 //   - Standard Huffman tables (any provided in file)
 //   - Quantization tables 8-bit precision
 //   - Converts to 4-channel RGBA output
-// Not (yet) supported: 4:2:0 / other sampling, restart markers, progressive JPEG, arithmetic coding.
+//   - Restart markers (DRI + RSTn) honored
+// Not (yet) supported: progressive JPEG, arithmetic coding, uncommon sampling factors, fancy chroma upsampling.
 // This is intentionally minimal & educational; DO NOT SHIP. Remove before upstream.
 #include "image_common.h"
 #include "../common/attr_endian.h"
@@ -68,7 +70,7 @@ int load_jpeg(const char *path, int decode_pixels, int manual, ImageData *out){
     // Storage for tables
     uint8_t quant[4][64]; memset(quant,0,sizeof quant); int haveQuant[4]={0};
     HuffmanTable huffDC[4]={0}, huffAC[4]={0}; int haveHuffDC[4]={0}, haveHuffAC[4]={0};
-    int width=0,height=0; Component comps[4]; int numComps=0; int sofParsed=0; size_t scanDataOff=0; size_t scanDataLen=0;
+    int width=0,height=0; Component comps[4]; int numComps=0; int sofParsed=0; size_t scanDataOff=0; size_t scanDataLen=0; int restart_interval=0;
     // Parse markers until SOS
     while(1){ int m = read_marker(f); if(m<0){ fclose(f); return -1; }
         if(m==0xD9){ break; }
@@ -82,51 +84,82 @@ int load_jpeg(const char *path, int decode_pixels, int manual, ImageData *out){
             // Skip Ss Se Ah Al (baseline: Ss=0 Se=63 Ah=0 Al=0)
             read_byte(f); read_byte(f); read_byte(f);
             scanDataOff = ftell(f);
-            // Read until next marker 0xFFxx (EOI or something) to get size
-            // We'll slurp rest of file then trim trailing marker if found.
+            // Read until end of file
             fseek(f,0,SEEK_END); size_t fileEnd = ftell(f); fseek(f,scanDataOff,SEEK_SET);
             size_t alloc = fileEnd - scanDataOff; uint8_t *edata = (uint8_t*)malloc(alloc); if(!edata){ fclose(f); return -1; }
             size_t rd = fread(edata,1,alloc,f);
-            // Trim trailing EOI if present
             if(rd>=2 && edata[rd-2]==0xFF && edata[rd-1]==0xD9){ rd-=2; }
             scanDataLen=rd;
-            // If not decoding pixels we can stop now.
             if(!decode_pixels){ free(edata); break; }
-            // Only support 3 components with 1x1 sampling (4:4:4)
             if(numComps!=3){ free(edata); fclose(f); return -1; }
-            for(int i=0;i<numComps;i++){ if(comps[i].h!=1||comps[i].v!=1){ free(edata); fclose(f); fprintf(stderr,"JPEG sampling not supported (only 4:4:4)\n"); return -1; } }
-            // Build entropy bitstream
+            int is_444 = (comps[0].h==1&&comps[0].v==1&&comps[1].h==1&&comps[1].v==1&&comps[2].h==1&&comps[2].v==1);
+            int is_420 = (comps[0].h==2&&comps[0].v==2&&comps[1].h==1&&comps[1].v==1&&comps[2].h==1&&comps[2].v==1);
+            if(!is_444 && !is_420){ free(edata); fclose(f); fprintf(stderr,"JPEG sampling unsupported\n"); return -1; }
             BitStream bs; bs_init(&bs, edata, rd);
-            size_t mcuCountX = (width +7)/8; size_t mcuCountY = (height+7)/8;
+            size_t mcuCountX = is_420 ? (width +15)/16 : (width +7)/8;
+            size_t mcuCountY = is_420 ? (height+15)/16 : (height+7)/8;
             unsigned char *pixels = (unsigned char*)malloc((size_t)width*height*4); if(!pixels){ free(edata); fclose(f); return -1; }
-            int16_t prevDC[3]={0,0,0};
+            int16_t prevDC[3]={0,0,0}; int rst_mcu_count=0; int rst_expected=0;
             int qSel[3]; int dcSel[3]; int acSel[3]; for(int i=0;i<3;i++){ qSel[i]=comps[i].tq; dcSel[i]=0; acSel[i]=0; }
             for(size_t my=0; my<mcuCountY; my++){
                 for(size_t mx=0; mx<mcuCountX; mx++){
-                    int16_t block[3][64]; memset(block,0,sizeof block);
-                    for(int ci=0;ci<3;ci++){
-                        // Decode one 8x8 block
-                        int sym; if(huff_decode(&bs, &huffDC[dcSel[ci]], &sym)<0){ /* error */ }
-                        int sizeDC = sym; int dcDiff=0; if(sizeDC){ int bits; if(bs_get(&bs,sizeDC,&bits)<0){} if(bits < (1<<(sizeDC-1))) bits -= (1<<sizeDC)-1; dcDiff=bits; }
-                        int dc = prevDC[ci] + dcDiff; prevDC[ci]=dc; block[ci][0]=dc;
-                        int k=1; while(k<64){ if(huff_decode(&bs, &huffAC[acSel[ci]], &sym)<0) break; if(sym==0x00){ break; } // EOB
-                            int run = sym>>4; int size = sym & 0xF; if(size==0){ if(run==0xF){ k+=16; continue; } }
-                            k += run; if(k>=64) break; int bits; if(size){ if(bs_get(&bs,size,&bits)<0) break; if(bits < (1<<(size-1))) bits -= (1<<size)-1; block[ci][zigzag[k]] = bits; } k++; }
-                        // Dequantize
-                        if(haveQuant[qSel[ci]]) for(int i=0;i<64;i++) block[ci][i] = (int16_t)(block[ci][i] * quant[qSel[ci]][i]);
-                        idct_block(block[ci]);
+                    if(is_444){
+                        int16_t block[3][64]; memset(block,0,sizeof block);
+                        for(int ci=0;ci<3;ci++){
+                            int sym; if(huff_decode(&bs,&huffDC[dcSel[ci]],&sym)<0){}
+                            int sizeDC=sym; int dcDiff=0; if(sizeDC){ int bits; if(bs_get(&bs,sizeDC,&bits)<0){} if(bits < (1<<(sizeDC-1))) bits -= (1<<sizeDC)-1; dcDiff=bits; }
+                            int dc=prevDC[ci]+dcDiff; prevDC[ci]=dc; block[ci][0]=dc;
+                            int k=1; while(k<64){ if(huff_decode(&bs,&huffAC[acSel[ci]],&sym)<0) break; if(sym==0){ break; } int run=sym>>4; int size=sym&0xF; if(size==0){ if(run==0xF){ k+=16; continue; } } k+=run; if(k>=64) break; int bits; if(size){ if(bs_get(&bs,size,&bits)<0) break; if(bits < (1<<(size-1))) bits -= (1<<size)-1; block[ci][zigzag[k]]=bits; } k++; }
+                            if(haveQuant[qSel[ci]]) for(int i=0;i<64;i++) block[ci][i]=(int16_t)(block[ci][i]*quant[qSel[ci]][i]);
+                            idct_block(block[ci]);
+                        }
+                        for(int by=0; by<8; by++){
+                            int py=(int)(my*8+by); if(py>=height) break;
+                            for(int bx=0; bx<8; bx++){
+                                int px=(int)(mx*8+bx); if(px>=width) break;
+                                int Y=block[0][by*8+bx]; int Cb=block[1][by*8+bx]-128; int Cr=block[2][by*8+bx]-128;
+                                int R=Y + (int)(1.402*Cr);
+                                int G=Y - (int)(0.344136*Cb + 0.714136*Cr);
+                                int B=Y + (int)(1.772*Cb);
+                                if(R<0)R=0; if(R>255)R=255; if(G<0)G=0; if(G>255)G=255; if(B<0)B=0; if(B>255)B=255;
+                                size_t di=((size_t)py*width+px)*4; pixels[di+0]=(uint8_t)R; pixels[di+1]=(uint8_t)G; pixels[di+2]=(uint8_t)B; pixels[di+3]=255;
+                            }
+                        }
+                    } else { // 4:2:0
+                        int16_t yblk[4][64]; int16_t cbblk[64]; int16_t crblk[64]; memset(yblk,0,sizeof yblk); memset(cbblk,0,sizeof cbblk); memset(crblk,0,sizeof crblk);
+                        for(int yi=0; yi<4; yi++){
+                            int sym; if(huff_decode(&bs,&huffDC[dcSel[0]],&sym)<0){}
+                            int sizeDC=sym; int dcDiff=0; if(sizeDC){ int bits; if(bs_get(&bs,sizeDC,&bits)<0){} if(bits < (1<<(sizeDC-1))) bits -= (1<<sizeDC)-1; dcDiff=bits; }
+                            int dc=prevDC[0]+dcDiff; prevDC[0]=dc; yblk[yi][0]=dc;
+                            int k=1; while(k<64){ if(huff_decode(&bs,&huffAC[acSel[0]],&sym)<0) break; if(sym==0){ break; } int run=sym>>4; int size=sym&0xF; if(size==0){ if(run==0xF){ k+=16; continue; } } k+=run; if(k>=64) break; int bits; if(size){ if(bs_get(&bs,size,&bits)<0) break; if(bits < (1<<(size-1))) bits -= (1<<size)-1; yblk[yi][zigzag[k]]=bits; } k++; }
+                            if(haveQuant[qSel[0]]) for(int i=0;i<64;i++) yblk[yi][i]=(int16_t)(yblk[yi][i]*quant[qSel[0]][i]); idct_block(yblk[yi]);
+                        }
+                        { int sym; if(huff_decode(&bs,&huffDC[dcSel[1]],&sym)<0){} int sizeDC=sym; int dcDiff=0; if(sizeDC){ int bits; if(bs_get(&bs,sizeDC,&bits)<0){} if(bits < (1<<(sizeDC-1))) bits -= (1<<sizeDC)-1; dcDiff=bits; } int dc=prevDC[1]+dcDiff; prevDC[1]=dc; cbblk[0]=dc; int k=1; while(k<64){ if(huff_decode(&bs,&huffAC[acSel[1]],&sym)<0) break; if(sym==0){ break; } int run=sym>>4; int size=sym&0xF; if(size==0){ if(run==0xF){ k+=16; continue; } } k+=run; if(k>=64) break; int bits; if(size){ if(bs_get(&bs,size,&bits)<0) break; if(bits < (1<<(size-1))) bits -= (1<<size)-1; cbblk[zigzag[k]]=bits; } k++; } if(haveQuant[qSel[1]]) for(int i=0;i<64;i++) cbblk[i]=(int16_t)(cbblk[i]*quant[qSel[1]][i]); idct_block(cbblk); }
+                        { int sym; if(huff_decode(&bs,&huffDC[dcSel[2]],&sym)<0){} int sizeDC=sym; int dcDiff=0; if(sizeDC){ int bits; if(bs_get(&bs,sizeDC,&bits)<0){} if(bits < (1<<(sizeDC-1))) bits -= (1<<sizeDC)-1; dcDiff=bits; } int dc=prevDC[2]+dcDiff; prevDC[2]=dc; crblk[0]=dc; int k=1; while(k<64){ if(huff_decode(&bs,&huffAC[acSel[2]],&sym)<0) break; if(sym==0){ break; } int run=sym>>4; int size=sym&0xF; if(size==0){ if(run==0xF){ k+=16; continue; } } k+=run; if(k>=64) break; int bits; if(size){ if(bs_get(&bs,size,&bits)<0) break; if(bits < (1<<(size-1))) bits -= (1<<size)-1; crblk[zigzag[k]]=bits; } k++; } if(haveQuant[qSel[2]]) for(int i=0;i<64;i++) crblk[i]=(int16_t)(crblk[i]*quant[qSel[2]][i]); idct_block(crblk); }
+                        for(int sy=0; sy<16; sy++){
+                            int py=(int)(my*16+sy); if(py>=height) break;
+                            for(int sx=0; sx<16; sx++){
+                                int px=(int)(mx*16+sx); if(px>=width) break;
+                                int yb=(sy/8)*2 + (sx/8); int ly=sy%8; int lx=sx%8; int Y=yblk[yb][ly*8+lx];
+                                int Cb = cbblk[(sy/2)*8 + (sx/2)] - 128; int Cr = crblk[(sy/2)*8 + (sx/2)] - 128;
+                                int R=Y + (int)(1.402*Cr);
+                                int G=Y - (int)(0.344136*Cb + 0.714136*Cr);
+                                int B=Y + (int)(1.772*Cb);
+                                if(R<0)R=0; if(R>255)R=255; if(G<0)G=0; if(G>255)G=255; if(B<0)B=0; if(B>255)B=255;
+                                size_t di=((size_t)py*width+px)*4; pixels[di+0]=(uint8_t)R; pixels[di+1]=(uint8_t)G; pixels[di+2]=(uint8_t)B; pixels[di+3]=255;
+                            }
+                        }
                     }
-                    // Color convert and store 8x8 tile
-                    for(int by=0; by<8; by++){
-                        int py = (int)(my*8 + by); if(py>=height) break;
-                        for(int bx=0; bx<8; bx++){
-                            int px = (int)(mx*8 + bx); if(px>=width) break;
-                            int Y = block[0][by*8+bx]; int Cb=block[1][by*8+bx]-128; int Cr=block[2][by*8+bx]-128;
-                            int R = Y + (int)(1.402*Cr);
-                            int G = Y - (int)(0.344136*Cb + 0.714136*Cr);
-                            int B = Y + (int)(1.772*Cb);
-                            if(R<0)R=0; if(R>255)R=255; if(G<0)G=0; if(G>255)G=255; if(B<0)B=0; if(B>255)B=255;
-                            size_t di = ((size_t)py*width + px)*4; pixels[di+0]=(uint8_t)R; pixels[di+1]=(uint8_t)G; pixels[di+2]=(uint8_t)B; pixels[di+3]=255;
+                    if(restart_interval){
+                        if(++rst_mcu_count == restart_interval){
+                            prevDC[0]=prevDC[1]=prevDC[2]=0; rst_mcu_count=0; rst_expected=(rst_expected+1)&7;
+                            // Byte-align
+                            bs.bit_count=0; bs.bit_buf=0;
+                            // Advance to next RST marker (0xFF D0..D7)
+                            while(bs.pos + 1 < bs.size){
+                                if(bs.data[bs.pos]==0xFF && (bs.data[bs.pos+1]&0xF8)==0xD0){ bs.pos+=2; break; }
+                                bs.pos++;
+                            }
                         }
                     }
                 }
@@ -154,6 +187,10 @@ int load_jpeg(const char *path, int decode_pixels, int manual, ImageData *out){
                 for(int i=0;i<total;i++){ int v=read_byte(f); if(v<0){ free(symbols); fclose(f); return -1; } symbols[i]=(uint8_t)v; }
                 if(tc==0){ build_huffman(&huffDC[th], lengths, symbols, total); haveHuffDC[th]=1; } else { build_huffman(&huffAC[th], lengths, symbols, total); haveHuffAC[th]=1; }
                 free(symbols); toRead -= (1+16+total); }
+        } else if(m==0xDD){ // DRI
+            struct seg_len L; if(fread(&L,sizeof L,1,f)!=1){ fclose(f); return -1; }
+            int seglen=L.len; if(seglen!=4){ fclose(f); return -1; }
+            be16 ri; if(fread(&ri,2,1,f)!=1){ fclose(f); return -1; } restart_interval = ri;
         } else { // Skip other markers
             struct seg_len L; if(fread(&L,sizeof L,1,f)!=1){ fclose(f); return -1; }
             int seglen=L.len; if(fseek(f, seglen-2, SEEK_CUR)){ fclose(f); return -1; }
