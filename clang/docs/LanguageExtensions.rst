@@ -28,6 +28,74 @@ these extensions.
 
 .. _langext-feature_check:
 
+Scalar Storage Order Attribute
+==============================
+
+Clang supports a GCC-compatible type attribute ``scalar_storage_order`` that
+annotates an integer or floating-point scalar type with an explicit byte
+ordering for its in-memory representation. The spelling is::
+
+  __attribute__((scalar_storage_order("little-endian")))
+  __attribute__((scalar_storage_order("big-endian")))
+
+The attribute may be applied where other GNU type attributes are permitted,
+including within a ``typedef`` declaration. For example:
+
+.. code-block:: c
+
+  typedef unsigned int __attribute__((scalar_storage_order("big-endian"))) be32_t;
+
+  be32_t load(const be32_t *p) { return *p; }
+
+When the specified storage order differs from the target's native endianness,
+Clang will insert the appropriate ``llvm.bswap`` intrinsic around scalar loads
+and stores of the attributed type so that the program sees the value in native
+endian form while the underlying object representation uses the specified
+ordering. If the storage order matches the target's endianness, no additional
+code is emitted.
+
+Semantics
+---------
+
+* Applies only to scalar integer and floating-point types (including typedefs
+  thereof). Applying it to any other type currently produces an error.
+* Bit widths of 8 bits or less incur no byte-swap (there is only one byte).
+* Floating types are handled by bitcasting through an integer type of the same
+  size, performing a byte-swap, then casting back.
+* The attribute composes transitively through typedef sugar but is not
+  permitted directly on arrays, pointers, function types, or aggregates at
+  present.
+
+Limitations / Future Work
+-------------------------
+
+Support for propagating ``scalar_storage_order`` through arrays or aggregate
+types (e.g. applying to each scalar element) is not yet implemented. Such
+usage is currently rejected. Interaction with bit-fields and packed structs
+will require additional design discussion before being enabled.
+
+Feature Test Macro
+------------------
+
+Code can test for support using ``__has_attribute(scalar_storage_order)``. No
+dedicated ``__has_feature`` key is provided (the attribute is modeled as a
+GNU-style extension).
+
+Example
+-------
+
+.. code-block:: c
+
+  #if __has_attribute(scalar_storage_order)
+  typedef float __attribute__((scalar_storage_order("big-endian"))) befloat;
+  #endif
+
+  float f(befloat *p) {
+    // Load will include a byteswap on a little-endian target.
+    return *p;
+  }
+
+
 Feature Checking Macros
 =======================
 
