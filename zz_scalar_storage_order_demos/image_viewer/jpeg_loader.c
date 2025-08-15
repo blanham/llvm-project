@@ -70,11 +70,17 @@ int load_jpeg(const char *path, int decode_pixels, int manual, ImageData *out){
     // Storage for tables
     uint8_t quant[4][64]; memset(quant,0,sizeof quant); int haveQuant[4]={0};
     HuffmanTable huffDC[4]={0}, huffAC[4]={0}; int haveHuffDC[4]={0}, haveHuffAC[4]={0};
-    int width=0,height=0; Component comps[4]; int numComps=0; int sofParsed=0; size_t scanDataOff=0; size_t scanDataLen=0; int restart_interval=0;
+    int width=0,height=0; Component comps[4]; int numComps=0; int sofParsed=0; size_t scanDataOff=0; size_t scanDataLen=0; int restart_interval=0; int progressive=0;
     // Parse markers until SOS
     while(1){ int m = read_marker(f); if(m<0){ fclose(f); return -1; }
         if(m==0xD9){ break; }
         if(m==0xDA){ // SOS
+            if(progressive){
+                // For progressive JPEG we only report dimensions & bail (demo keeps baseline simple)
+                fprintf(stderr,"Progressive JPEG detected – skipping decode (baseline-only demo)\n");
+                fclose(f);
+                out->width=width; out->height=height; out->channels=3; return 0;
+            }
             struct seg_len L; if(fread(&L, sizeof L,1,f)!=1){ fclose(f); return -1; }
             int seglen=L.len; // big-endian auto-swapped
             if(seglen<2){ fclose(f); return -1; }
@@ -165,7 +171,7 @@ int load_jpeg(const char *path, int decode_pixels, int manual, ImageData *out){
                 }
             }
             free(edata); out->pixels=pixels; out->width=width; out->height=height; out->channels=4; break; // done
-        } else if(m==0xC0){ // SOF0
+        } else if(m==0xC0){ // SOF0 (baseline)
             struct seg_len L; if(fread(&L,sizeof L,1,f)!=1){ fclose(f); return -1; }
             int seglen=L.len; if(seglen<8){ fclose(f); return -1; }
             int precision = read_byte(f); if(precision!=8){ fclose(f); return -1; }
@@ -173,6 +179,14 @@ int load_jpeg(const char *path, int decode_pixels, int manual, ImageData *out){
             height = h_be; width = w_be; numComps = read_byte(f); if(numComps<=0||numComps>3){ fclose(f); return -1; }
             for(int i=0;i<numComps;i++){ comps[i].id=read_byte(f); int hv=read_byte(f); comps[i].h = (hv>>4)&0xF; comps[i].v = hv & 0xF; comps[i].tq=read_byte(f); }
             sofParsed=1;
+        } else if(m==0xC2){ // SOF2 (progressive) – record dims then mark progressive
+            struct seg_len L; if(fread(&L,sizeof L,1,f)!=1){ fclose(f); return -1; }
+            int seglen=L.len; if(seglen<8){ fclose(f); return -1; }
+            int precision = read_byte(f); if(precision!=8){ fclose(f); return -1; }
+            be16 h_be,w_be; if(fread(&h_be,2,1,f)!=1 || fread(&w_be,2,1,f)!=1){ fclose(f); return -1; }
+            height = h_be; width = w_be; numComps = read_byte(f); if(numComps<=0||numComps>3){ fclose(f); return -1; }
+            for(int i=0;i<numComps;i++){ comps[i].id=read_byte(f); int hv=read_byte(f); comps[i].h = (hv>>4)&0xF; comps[i].v = hv & 0xF; comps[i].tq=read_byte(f); }
+            progressive=1; sofParsed=1;
         } else if(m==0xDB){ // DQT
             struct seg_len L; if(fread(&L,sizeof L,1,f)!=1){ fclose(f); return -1; }
             int seglen=L.len; int toRead = seglen - 2; while(toRead>0){ int pq_tq = read_byte(f); toRead--; int pq = (pq_tq>>4)&0xF; int tq = pq_tq & 0xF; if(pq!=0){ fclose(f); return -1; }
@@ -201,5 +215,13 @@ int load_jpeg(const char *path, int decode_pixels, int manual, ImageData *out){
     if(!decode_pixels){ out->width=width; out->height=height; out->channels=3; return 0; }
     if(!out->pixels){ // decode failed earlier
         return -1; }
+    if(getenv("SSO_JPEG_META")){
+        fprintf(stderr,"JPEG_META width=%d height=%d comps=%d restart_interval=%d sampling=%dx%d/%dx%d/%dx%d progressive=%d\n",
+                width,height,numComps,restart_interval,
+                numComps>0?comps[0].h:0,numComps>0?comps[0].v:0,
+                numComps>1?comps[1].h:0,numComps>1?comps[1].v:0,
+                numComps>2?comps[2].h:0,numComps>2?comps[2].v:0,
+                progressive);
+    }
     return 0;
 }
