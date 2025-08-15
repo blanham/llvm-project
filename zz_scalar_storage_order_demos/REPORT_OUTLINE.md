@@ -6,7 +6,7 @@ This file sketches a prospective conference-style paper/report to be generated (
 Transparent Host-Endianness Semantics for Heterogeneous Data: Implementing `scalar_storage_order` in Clang
 
 ## Abstract
-[Summary of motivation, approach, performance neutrality, real-world applicability with packet/image case studies.]
+[Summary of motivation, approach, performance neutrality, real-world applicability with packet/image case studies, and a meta reflection on large-scale AI-assisted implementation using GitHub Copilot acting as an autonomous coding agent.] 
 
 ## 1. Introduction
 - Problem: manual byte swapping clutter & risk.
@@ -55,10 +55,23 @@ Transparent Host-Endianness Semantics for Heterogeneous Data: Implementing `scal
 
 ## 11. Conclusion
 - Recap & call for community feedback.
+- Reflection on AI-assisted development efficiency & limitations.
+
+## 12. AI-Assisted Engineering Process (Meta Section)
+- Workflow: continuous natural-language task specification -> automated code generation, tests, docs, benchmarking.
+- Toolchain usage: attribute design iterations, semantic validation, CodeGen edits, demo program expansion, performance data collection, and report assembly driven by conversational directives.
+- Division of labor: human sets goals & priorities; agent executes implementation, creates tests, benchmarks, and documentation; human retains architectural oversight & acceptance.
+- Productivity metrics (to gather): commits authored by agent, LOC added/modified, turnaround time per feature, defect rate observed in follow-up corrections.
+- Quality controls: iterative compilation, runtime pixel/packet equivalence tests, hashing & benchmark parity checks.
+- Reproducibility: deterministic scripts (fetch_test_images.sh, compare_pixels.sh, build_report.sh) enable third parties to replicate evaluation; plan file logs backlog evolution.
+- Ethical/license considerations: automated retrieval of only openly licensed or public-domain artifacts; explicit attributions embedded in scripts, excluding media from repository source.
+- Limitations & risks: potential for subtle security / UB issues without deep manual review; need for human arbitration on architectural trade-offs, performance tuning, and upstream suitability (demo code intentionally excluded pre-merge).
+- Future directions: tighter integration of static analysis feedback loops, automatic differential IR inspection for swap insertion correctness, auto-synthesis of additional optimization peepholes.
 
 ## Appendix
 - Selected code listings (abbreviated).
 - Reproduction script description.
+- AI session log summary (optional) mapping milestones to commit hashes.
 
 ---
 Generation Plan:
