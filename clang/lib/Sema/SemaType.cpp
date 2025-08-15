@@ -9145,8 +9145,16 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
     case ParsedAttr::AT_ScalarStorageOrder: {
       // Accept only on scalar integer or floating types (after peeling array).
       QualType ElemType = type;
-      if (type->getAsArrayTypeUnsafe())
+      bool IsArray = false;
+      if (type->getAsArrayTypeUnsafe()) {
+        IsArray = true; // Not yet supported: would need propagation to element accesses.
         ElemType = state.getSema().Context.getBaseElementType(type);
+      }
+      if (IsArray) {
+        diagnoseBadTypeAttribute(state.getSema(), attr, type);
+        attr.setInvalid();
+        break;
+      }
       if (!ElemType->isIntegerType() && !ElemType->isFloatingType()) {
         diagnoseBadTypeAttribute(state.getSema(), attr, type);
         attr.setInvalid();
