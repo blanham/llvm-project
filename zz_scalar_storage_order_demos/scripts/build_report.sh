@@ -46,6 +46,40 @@ else
 fi
 
 PDF_OUT="$OUT_DIR/scalar_storage_order_report.pdf"
+AGG_JSON="$ROOT_DIR/benchmarks/aggregate.json"
+if [[ -f "$AGG_JSON" && -x "$(command -v jq || echo /n)" ]]; then
+  echo -e "\n## Aggregate Benchmark & Environment Summary\n" >> "$REPORT_MD"
+  echo "Aggregate source: benchmarks/aggregate.json" >> "$REPORT_MD"
+  # Speedup summary
+  jq -r '"- Average image speedup: \(.summary.avg_image_speedup)"' "$AGG_JSON" >> "$REPORT_MD" || true
+  jq -r '"- Average pcap speedup: \(.summary.avg_pcap_speedup)"' "$AGG_JSON" >> "$REPORT_MD" || true
+  # Build metrics table
+  echo -e "\n### Build Size & Time Metrics\n" >> "$REPORT_MD"
+  echo "Target | With Attr | Time (ms) | Size (bytes) | Delta Size %" >> "$REPORT_MD"
+  echo "------ | --------- | --------- | ------------ | ------------" >> "$REPORT_MD"
+  # Compute baseline (with_attr==0) sizes per target for delta reference
+  jq -r '.build.builds[] | @base64' "$AGG_JSON" | while read -r row; do
+    json(){ echo "$row" | base64 --decode | jq -r "$1"; }
+    : # just placeholder
+  done > /dev/null
+  # Build associative arrays via jq for sizes
+  # We'll produce lines via jq directly for simplicity
+  jq -r '
+    def pct(a;b): if b==0 then null else ((a-b)*100.0/b) end;
+    (.build.builds // []) as $b |
+    [ $b[] | select(.with_attr==0) | {key:.target, base:.size_bytes} ] as $base |
+    $b[] | . as $cur |
+    ($base[] | select(.key==$cur.target) | .base) as $base_size |
+    [$cur.target, (if $cur.with_attr==1 then "yes" else "no" end), $cur.time_ms, $cur.size_bytes, (pct($cur.size_bytes;$base_size)) ] | @tsv' "$AGG_JSON" | while IFS=$'\t' read -r target with_attr time size delta; do
+      printf "%s | %s | %s | %s | %s\n" "$target" "$with_attr" "$time" "$size" "${delta:-}" >> "$REPORT_MD"
+    done
+  # Environment snapshot subset
+  echo -e "\n### Environment\n" >> "$REPORT_MD"
+  jq -r '"- CPU: \(.environment.cpu.model) cores=\(.environment.cpu.cores)"' "$AGG_JSON" >> "$REPORT_MD" || true
+  jq -r '"- Compiler: \(.environment.compiler.clang)"' "$AGG_JSON" >> "$REPORT_MD" || true
+  jq -r '"- Git head: \(.environment.git.head) branch=\(.environment.git.branch)"' "$AGG_JSON" >> "$REPORT_MD" || true
+fi
+
 if command -v pandoc >/dev/null 2>&1; then
   ENGINE=pdflatex
   command -v xelatex >/dev/null 2>&1 && ENGINE=xelatex
