@@ -94,6 +94,19 @@ Current limitations and areas intentionally deferred:
 * No attempt is made to optimize sequences of redundant swaps beyond what
   standard optimization passes achieve.
 
+Debuggers / Tooling
+-------------------
+
+Today debuggers (LLDB/GDB) will display the logical value of an attributed
+object (after any implicit swap) because the transformation is performed in
+code before the value is materialized in a register. Raw memory / hex dumps
+will therefore show the byte-reversed representation for big-endian storage on
+little-endian targets (and vice versa). A future enhancement could introduce a
+vendor DWARF attribute (e.g. ``DW_AT_LLVM_scalar_storage_endian``) or a
+location expression operator to annotate the alternate on-memory byte order so
+debuggers can optionally present both the logical and stored forms. This is
+left for follow-on work pending user demand and cross-toolchain coordination.
+
 Feature Test Macro
 ------------------
 
