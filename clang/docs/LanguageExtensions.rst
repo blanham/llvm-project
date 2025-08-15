@@ -33,13 +33,21 @@ Scalar Storage Order Attribute
 
 Clang supports a GCC-compatible type attribute ``scalar_storage_order`` that
 annotates an integer or floating-point scalar type with an explicit byte
-ordering for its in-memory representation. The spelling is::
+ordering for its in-memory representation. The GNU-style spelling is::
 
   __attribute__((scalar_storage_order("little-endian")))
   __attribute__((scalar_storage_order("big-endian")))
 
+In C++ code the attribute may also be spelled using the ``[[gnu::...]]`` form:
+
+.. code-block:: c++
+
+  using be32_t = unsigned int [[gnu::scalar_storage_order("big-endian")]];
+
 The attribute may be applied where other GNU type attributes are permitted,
-including within a ``typedef`` declaration. For example:
+including within a ``typedef`` (or ``using``) declaration. Mixed spellings
+of the same order are treated as duplicates and silently coalesce; conflicting
+orders on the same underlying type are diagnosed as errors. For example:
 
 .. code-block:: c
 
@@ -49,30 +57,42 @@ including within a ``typedef`` declaration. For example:
 
 When the specified storage order differs from the target's native endianness,
 Clang will insert the appropriate ``llvm.bswap`` intrinsic around scalar loads
-and stores of the attributed type so that the program sees the value in native
-endian form while the underlying object representation uses the specified
-ordering. If the storage order matches the target's endianness, no additional
-code is emitted.
+and stores of the attributed type (or bitcasted integer surrogate for floats)
+so that the program observes the value in native endian form while the
+underlying object representation uses the specified ordering. If the storage
+order matches the target's endianness, no additional code is emitted.
 
 Semantics
 ---------
 
-* Applies only to scalar integer and floating-point types (including typedefs
-  thereof). Applying it to any other type currently produces an error.
+* Applies only to scalar integer and floating-point types (including typedef / ``using`` aliases).
+  Applying it to any other type currently produces an error.
 * Bit widths of 8 bits or less incur no byte-swap (there is only one byte).
 * Floating types are handled by bitcasting through an integer type of the same
-  size, performing a byte-swap, then casting back.
-* The attribute composes transitively through typedef sugar but is not
-  permitted directly on arrays, pointers, function types, or aggregates at
-  present.
+  size (supported for 16, 32, 64, and 128-bit floating types), performing a
+  byte-swap, then casting back. Extended 80-bit ``long double`` is currently
+  left unswapped.
+* The attribute composes transitively through typedef / ``using`` sugar; a
+  repeated specification with the same order is ignored, while a conflicting
+  order on the same underlying type is rejected.
+* Not permitted directly on arrays, vectors, pointers, references, function
+  types, unions, or structures; only scalar base types. (Future work may
+  enable propagation to elements.)
+* Atomic-qualified types are currently rejected; semantics are deferred.
+* No impact on layout or ABI aside from the added (or elided) byteswap code
+  at scalar load / store boundaries.
 
 Limitations / Future Work
 -------------------------
 
-Support for propagating ``scalar_storage_order`` through arrays or aggregate
-types (e.g. applying to each scalar element) is not yet implemented. Such
-usage is currently rejected. Interaction with bit-fields and packed structs
-will require additional design discussion before being enabled.
+Current limitations and areas intentionally deferred:
+
+* Propagation through arrays or aggregates is not implemented (and rejected).
+* Interaction with bit-fields, packed structs, and unions is not defined yet.
+* Atomic types with the attribute are rejected.
+* No debug-info metadata is currently emitted to reflect the alternate storage order.
+* No attempt is made to optimize sequences of redundant swaps beyond what
+  standard optimization passes achieve.
 
 Feature Test Macro
 ------------------

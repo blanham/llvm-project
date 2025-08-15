@@ -147,6 +147,18 @@ Removed Compiler Flags
 Attribute Changes in Clang
 --------------------------
 
+* Added support for the GCC-compatible ``scalar_storage_order`` type attribute
+  on scalar integer and floating-point types. The attribute permits explicitly
+  specifying a big- or little-endian in-memory representation independent of
+  the target's native endianness. When the chosen storage order differs from
+  the target, Clang inserts the appropriate ``llvm.bswap`` intrinsic around
+  loads and stores so that user code observes values in native order. The
+  attribute currently applies only to scalar types (not arrays, aggregates,
+  vectors, bit-fields, unions, or atomics). Duplicate specifications of the
+  same order are ignored; conflicting orders produce an error. Floating types
+  of 16, 32, 64 and 128 bits are swapped via integer bitcasts; 80-bit extended
+  ``long double`` is currently left as-is.
+
 Improvements to Clang's diagnostics
 -----------------------------------
 - Added a separate diagnostic group ``-Wfunction-effect-redeclarations``, for the more pedantic
