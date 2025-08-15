@@ -10,12 +10,12 @@ typedef unsigned int __attribute__((scalar_storage_order("middle"))) bad_arg; //
 typedef unsigned int __attribute__((scalar_storage_order())) no_arg; // expected-error {{'scalar_storage_order' attribute takes one argument}}
 typedef unsigned int __attribute__((scalar_storage_order("little-endian","big-endian"))) two_args; // expected-error {{'scalar_storage_order' attribute takes one argument}}
 
-// Not on non-scalar (currently diagnosed by generic ignored-attributes warning machinery)
+// Not on non-scalar (struct)
 struct S { int x; };
-typedef struct S __attribute__((scalar_storage_order("big-endian"))) bad_struct; // expected-warning {{'scalar_storage_order' only applies to function types; type here is 'struct S'}}
+typedef struct S __attribute__((scalar_storage_order("big-endian"))) bad_struct; // expected-error {{'scalar_storage_order' attribute only applies to scalar integer or floating types}}
 
 // Not on pointer
-typedef int * __attribute__((scalar_storage_order("big-endian"))) bad_ptr; // expected-warning {{'scalar_storage_order' only applies to function types; type here is 'int *'}}
+typedef int * __attribute__((scalar_storage_order("big-endian"))) bad_ptr; // expected-error {{'scalar_storage_order' attribute only applies to scalar integer or floating types}}
 
 // Not on function type (attribute placed within function pointer declarator)
-typedef int (__attribute__((scalar_storage_order("big-endian"))) *fnptr)(int); // expected-warning {{'scalar_storage_order' only applies to function types; type here is 'int (int)'}}
+typedef int (__attribute__((scalar_storage_order("big-endian"))) *fnptr)(int); // expected-error {{'scalar_storage_order' attribute only applies to scalar integer or floating types}}

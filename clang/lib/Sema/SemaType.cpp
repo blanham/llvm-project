@@ -9151,12 +9151,14 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
         ElemType = state.getSema().Context.getBaseElementType(type);
       }
       if (IsArray) {
-        diagnoseBadTypeAttribute(state.getSema(), attr, type);
+  state.getSema().Diag(attr.getLoc(),
+           diag::err_attribute_scalar_storage_order_wrong_type);
         attr.setInvalid();
         break;
       }
       if (!ElemType->isIntegerType() && !ElemType->isFloatingType()) {
-        diagnoseBadTypeAttribute(state.getSema(), attr, type);
+  state.getSema().Diag(attr.getLoc(),
+           diag::err_attribute_scalar_storage_order_wrong_type);
         attr.setInvalid();
         break;
       }
