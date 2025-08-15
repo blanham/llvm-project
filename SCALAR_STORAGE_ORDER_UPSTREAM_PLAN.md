@@ -157,6 +157,48 @@ Delete this file before publishing the cleaned patch series (`git rm SCALAR_STOR
 ---
 Generated plan to guide upstream readiness. Update progress directly in this file while iterating.
 
+## 11. Shock-and-Awe Demo Expansion Backlog (Post Core Attribute & Initial Demos)
+These items track the "add all of them" request after committing the initial pcap + image loader demonstration suite. They are NOT required for upstreaming the core attribute, but help showcase depth, performance, and real-world applicability.
+
+### High-Impact (Tackle Early)
+1. PNG Enhancements (CRC verification, PLTE palette & tRNS transparency, color type 3 & 4 support, ancillary chunk logging, robust length bounds). (PARTIAL: CRC + PLTE + tRNS + indexed + GA implemented – mark remaining when done.)
+2. Full Baseline JPEG Decoder (parse DQT, DHT, SOF0, SOS; Huffman decode MCU stream; dequant + IDCT (slow reference first); color conversion to RGBA; restart markers; graceful error paths).
+3. CodeGen Peephole Optimizations for scalar_storage_order (elide redundant swap pairs, pattern-match to target rev instructions, vectorize consecutive scalar loads/stores where legal).
+4. DWARF Emission Prototype (draft DW_AT_LLVM_scalar_storage_endian + potential DW_OP byteswap emission; coordinate with llvm-dwarfdump & LLDB / lldb DWARF parser update; provide hidden flag or always-on emission pending reviewer guidance).
+5. Unified Demo Build System (Makefile or CMake snippet) offering: build attr vs manual variants, run perf scripts, size comparison, easy clean removal.
+
+### Network / Protocol Demo Extensions
+6. Pcap Dissector: IPv6 (basic header + next-header chain), ICMPv4/ICMPv6 summaries, DNS deeper parse (questions/answers/RCODE), heuristic TLS ClientHello (SNI extraction), QUIC initial packet version/SNI heuristic, ARP already present (extend formatting), optional reassembly stub (deferred).
+7. pcap-ng Support (Section Header Block, Interface Description, Enhanced Packet Block; fallback to classic pcap if parse fails). Provide attribute usage for block total length fields.
+8. Live Capture Ingestion Harness (optional, behind build flag) reading from a FIFO or libpcap if present; remain easily removable.
+
+### Image Demo Extensions
+9. PNG: Adam7 interlace support; ancillary chunks of interest (gAMA, sRGB, iCCP (parse header only), pHYs); CRC failure statistics mode; memory safety fuzz harness.
+10. JPEG: Progressive JPEG (SOF2) detection (graceful skip) + restart marker handling; experimental SIMD (platform-guarded) IDCT micro-optimization (after correctness baseline) keeping attr usage in header parsing.
+11. Additional Formats (if time): TGA (uncompressed 24/32), simple uncompressed TIFF baseline (endian tag interplay demonstration), maybe little-endian BMP variant cross-check demonstrating attribute elimination of manual swaps.
+12. MiniFB (or similar tiny framebuffer) Integration to display decoded images (optional runtime) with fallback to writing PPM/PNG via a tiny encoder.
+
+### Testing / Tooling Hardening
+13. Sanitizer Runs (ASan/UBSan) scripts over demos attr vs manual to validate no swap-induced UB.
+14. Cross-TU / LTO / ThinLTO attribute retention tests (multi-file lit tests) verifying no loss of attribute in IR.
+15. std::bit_cast / memcpy Interop micro-tests (document semantics: only typed loads/stores swap).
+16. Redundant Swap Elision Test Cases (store then immediate load; ensure future optimization reduces to no net swap when provably redundant) – initially expect two swaps, mark XFAIL optimization until implemented.
+17. Performance Benchmarks Expansion: mixed-endian struct arrays, random packet traces, interleaved manual + attributed fields to stress optimizer.
+18. Automated Diff Tool: Compare attr-decoded outputs vs manual-swapped outputs across corpus (images & pcaps) to assert identical results (hash-based).
+
+### Documentation & Developer Experience
+19. Extended LanguageExtensions.rst Examples referencing real-world demo snippets (packet dissector, PNG header parse) showing code brevity vs manual swap macros.
+20. Removal / Cleanup Script (ensure demo directory & plan file excised before upstream patch generation; maybe `scripts/prepare_upstream.sh`).
+21. FAQ Section in docs (Why not arrays/unions yet? Debugger view? Interaction with bit-fields?).
+
+### Future / Stretch
+22. Debugger Pretty-Printer Prototype (LLDB) recognizing attribute and displaying logical host-endian values.
+23. Backend Instruction Selection A/B microbench harness (validate rev / bswap lowering parity across backends: AArch64, x86_64, RISC-V, PowerPC).
+24. Vector / Array Attribute Semantics Design Draft (decide propagation vs per-element annotation; gather reviewer input).
+25. Atomic Support Design (evaluate where swap occurs: before/after atomic library call or expand intrinsic sequences; memory model impact doc).
+
+Tracking Legend: TODO = not started; PARTIAL = in progress; DONE = completed and committed in demo branch (non-upstream). Transition items to core plan only if they become prerequisites for upstream acceptance (unlikely except doc examples & maybe removal script).
+
 ## Appendix: Additional Potential Test Cases (Optional / Future)
 
 Not strictly required for initial upstream submission; retained here as a backlog for follow-on hardening or if reviewers request broader coverage.
