@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
+#include "minifb_stub.h" // bring stub prototypes at file scope (avoid inclusion inside function body)
 
 static int use_manual=0; static size_t bench_iter=0; static int decode_pixels=0; static const char *dump_raw_path=NULL; static int do_view=0; static const char *ppm_out=NULL;
 
@@ -28,8 +29,7 @@ int main(int argc,char**argv){ if(argc<2){ fprintf(stderr,"Usage: %s <image> [--
         if(ppm_out && img.pixels){ FILE *pf=fopen(ppm_out,"wb"); if(!pf){ perror("fopen ppm"); image_free(&img); return 1; } fprintf(pf,"P6\n%u %u\n255\n", img.width, img.height); // drop alpha
             for(uint32_t y=0;y<img.height;y++){ for(uint32_t x=0;x<img.width;x++){ size_t di=((size_t)y*img.width+x)*4; fputc(img.pixels[di+0],pf); fputc(img.pixels[di+1],pf); fputc(img.pixels[di+2],pf); } }
             fclose(pf); }
-        if(do_view && img.pixels){
-            #include "minifb_stub.h"
+    if(do_view && img.pixels){
             int win = mfb_open_ex("scalar_storage_order viewer", img.width, img.height, 0);
             if(win){
                 // Simple one-frame update; loop not persistent to keep demo minimal
