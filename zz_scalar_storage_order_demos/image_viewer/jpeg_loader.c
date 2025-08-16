@@ -34,8 +34,15 @@ typedef struct { uint8_t code[256]; uint8_t size[256]; int16_t minCode[17]; int1
 typedef struct { int16_t dc[64]; int16_t ac[64]; } DCTBlock; // placeholders
 
 static void build_huffman(HuffmanTable *ht, const uint8_t *lengths, const uint8_t *symbols, int symCount){
+    (void)symCount; // not needed (lengths define symbol count)
     // lengths[1..16] number of codes of each length in bits.
-    int k=0; for(int i=1;i<=16;i++) for(int j=0;j<lengths[i];j++) ht->symbols[k++] = symbols[k- (0)];
+    int k=0;
+    for(int i=1;i<=16;i++){
+        for(int j=0;j<lengths[i];j++){
+            ht->symbols[k] = symbols[k];
+            k++;
+        }
+    }
     ht->symbolCount = k;
     // Derive huff size & codes per Annex C.2
     int lastk=0; int code=0; for(int i=1;i<=16;i++){ for(int j=0;j<lengths[i];j++){ ht->size[lastk]=i; ht->code[lastk]=0; lastk++; } }
@@ -70,7 +77,7 @@ int load_jpeg(const char *path, int decode_pixels, int manual, ImageData *out){
     // Storage for tables
     uint8_t quant[4][64]; memset(quant,0,sizeof quant); int haveQuant[4]={0};
     HuffmanTable huffDC[4]={0}, huffAC[4]={0}; int haveHuffDC[4]={0}, haveHuffAC[4]={0};
-    int width=0,height=0; Component comps[4]; int numComps=0; int sofParsed=0; size_t scanDataOff=0; size_t scanDataLen=0; int restart_interval=0; int progressive=0;
+    int width=0,height=0; Component comps[4]; int numComps=0; size_t scanDataOff=0; size_t scanDataLen=0; int restart_interval=0; int progressive=0;
     // Parse markers until SOS
     while(1){ int m = read_marker(f); if(m<0){ fclose(f); return -1; }
         if(m==0xD9){ break; }
@@ -95,7 +102,7 @@ int load_jpeg(const char *path, int decode_pixels, int manual, ImageData *out){
             size_t alloc = fileEnd - scanDataOff; uint8_t *edata = (uint8_t*)malloc(alloc); if(!edata){ fclose(f); return -1; }
             size_t rd = fread(edata,1,alloc,f);
             if(rd>=2 && edata[rd-2]==0xFF && edata[rd-1]==0xD9){ rd-=2; }
-            scanDataLen=rd;
+            scanDataLen=rd; (void)scanDataLen; // length retained for possible future metrics
             if(!decode_pixels){ free(edata); break; }
             if(numComps!=3){ free(edata); fclose(f); return -1; }
             int is_444 = (comps[0].h==1&&comps[0].v==1&&comps[1].h==1&&comps[1].v==1&&comps[2].h==1&&comps[2].v==1);
@@ -178,7 +185,7 @@ int load_jpeg(const char *path, int decode_pixels, int manual, ImageData *out){
             be16 h_be,w_be; if(fread(&h_be,2,1,f)!=1 || fread(&w_be,2,1,f)!=1){ fclose(f); return -1; }
             height = h_be; width = w_be; numComps = read_byte(f); if(numComps<=0||numComps>3){ fclose(f); return -1; }
             for(int i=0;i<numComps;i++){ comps[i].id=read_byte(f); int hv=read_byte(f); comps[i].h = (hv>>4)&0xF; comps[i].v = hv & 0xF; comps[i].tq=read_byte(f); }
-            sofParsed=1;
+            /* SOF parsed */
         } else if(m==0xC2){ // SOF2 (progressive) – record dims then mark progressive
             struct seg_len L; if(fread(&L,sizeof L,1,f)!=1){ fclose(f); return -1; }
             int seglen=L.len; if(seglen<8){ fclose(f); return -1; }
@@ -186,7 +193,7 @@ int load_jpeg(const char *path, int decode_pixels, int manual, ImageData *out){
             be16 h_be,w_be; if(fread(&h_be,2,1,f)!=1 || fread(&w_be,2,1,f)!=1){ fclose(f); return -1; }
             height = h_be; width = w_be; numComps = read_byte(f); if(numComps<=0||numComps>3){ fclose(f); return -1; }
             for(int i=0;i<numComps;i++){ comps[i].id=read_byte(f); int hv=read_byte(f); comps[i].h = (hv>>4)&0xF; comps[i].v = hv & 0xF; comps[i].tq=read_byte(f); }
-            progressive=1; sofParsed=1;
+            progressive=1; /* SOF2 parsed */
         } else if(m==0xDB){ // DQT
             struct seg_len L; if(fread(&L,sizeof L,1,f)!=1){ fclose(f); return -1; }
             int seglen=L.len; int toRead = seglen - 2; while(toRead>0){ int pq_tq = read_byte(f); toRead--; int pq = (pq_tq>>4)&0xF; int tq = pq_tq & 0xF; if(pq!=0){ fclose(f); return -1; }

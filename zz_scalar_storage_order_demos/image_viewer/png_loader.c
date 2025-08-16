@@ -14,7 +14,14 @@ struct png_ihdr_attr { be32 width; be32 height; uint8_t bit_depth; uint8_t color
 struct png_chunk_manual { uint32_t length; char type[4]; };
 struct png_ihdr_manual { uint32_t width,height; uint8_t bit_depth,color_type,compression,filter,interlace; };
 
-static int read_be32(FILE *f, uint32_t *out){ unsigned char b[4]; if(fread(b,1,4,f)!=4) return -1; *out=(uint32_t)(b[0]<<24|b[1]<<16|b[2]<<8|b[3]); return 0; }
+// When scalar_storage_order attribute is not available (NO_SSO_ATTR defined), the be32
+// typedef degrades to a plain uint32_t so we must byteswap explicitly. Provide a helper
+// macro so the chunk/ihdr parsing code remains unified.
+#ifdef NO_SSO_ATTR
+#define READ_BE32_ATTR(v) mz_bswap32((uint32_t)(v))
+#else
+#define READ_BE32_ATTR(v) (v)
+#endif
 
 static uint32_t crc_table[256];
 static int crc_init=0;
@@ -22,8 +29,6 @@ static void make_crc_table(void){
     for(unsigned n=0;n<256;n++){ uint32_t c=n; for(int k=0;k<8;k++){ c = (c & 1)? (0xEDB88320u ^ (c>>1)) : (c>>1); } crc_table[n]=c; }
     crc_init=1;
 }
-static uint32_t png_crc(const unsigned char *buf,size_t len){ if(!crc_init) make_crc_table(); uint32_t c=0xFFFFFFFFu; for(size_t i=0;i<len;i++) c = crc_table[(c ^ buf[i]) & 0xFF] ^ (c>>8); return c ^ 0xFFFFFFFFu; }
-
 static int load_png_stream(FILE *f, int manual, int decode_pixels, ImageData *out){
     unsigned char sig[8]; if(fread(sig,1,8,f)!=8) return -1; unsigned char ref[8]={137,80,78,71,13,10,26,10}; if(memcmp(sig,ref,8)) return -1;
     uint32_t w=0,h=0; int color_type=0, bit_depth=0; int gotIHDR=0; int interlace=0;
@@ -31,13 +36,19 @@ static int load_png_stream(FILE *f, int manual, int decode_pixels, ImageData *ou
     unsigned char *palette=NULL; size_t palette_entries=0; unsigned char *trns=NULL; size_t trns_len=0; // tRNS raw data
     unsigned crc_mismatch_count=0;
     // Ancillary metadata
-    double gamma_val = 0.0; int have_gamma=0; int srgb_intent=-1; uint32_t phys_ppux=0, phys_ppuy=0; int phys_unit=0; int have_phys=0;
+    int have_gamma=0; int srgb_intent=-1; int have_phys=0; // detailed gamma/phys values omitted (not reported) to avoid unused var warnings
+    unsigned idat_count = 0; // track number of IDAT chunks for metadata reporting
     while(1){
-        long chunk_pos = ftell(f);
         unsigned char hdr[8]; if(fread(hdr,1,8,f)!=8) { goto fail; }
         uint32_t length; char type[5]={0};
-        if(manual){ length = (uint32_t)(hdr[0]<<24|hdr[1]<<16|hdr[2]<<8|hdr[3]); memcpy(type,&hdr[4],4); }
-        else { const struct png_chunk_attr *ch=(const struct png_chunk_attr*)hdr; length = ch->length; memcpy(type,ch->type,4); }
+        if(manual){
+            length = (uint32_t)(hdr[0]<<24|hdr[1]<<16|hdr[2]<<8|hdr[3]);
+            memcpy(type,&hdr[4],4);
+        } else {
+            const struct png_chunk_attr *ch=(const struct png_chunk_attr*)hdr;
+            length = READ_BE32_ATTR(ch->length);
+            memcpy(type,ch->type,4);
+        }
         if(length > (1u<<24)) { fprintf(stderr,"PNG chunk too big\n"); goto fail; }
         unsigned char *data = (unsigned char*)malloc(length); if(length && fread(data,1,length,f)!=length){ free(data); goto fail; }
     unsigned char crcbuf[4]; if(fread(crcbuf,1,4,f)!=4){ free(data); goto fail; }
@@ -50,11 +61,21 @@ static int load_png_stream(FILE *f, int manual, int decode_pixels, ImageData *ou
     if(crc_read != crc_calc){ fprintf(stderr,"[png] CRC mismatch in %s (got %08x expected %08x)\n", type, crc_read, crc_calc); crc_mismatch_count++; }
         if(!strcmp(type,"IHDR")){
             if(length!=13){ free(data); goto fail; }
-            if(manual){ struct png_ihdr_manual ih; memcpy(&ih,data,13); w=mz_bswap32(ih.width); h=mz_bswap32(ih.height); bit_depth=ih.bit_depth; color_type=ih.color_type; }
-            else { const struct png_ihdr_attr *ih=(const struct png_ihdr_attr*)data; w=ih->width; h=ih->height; bit_depth=ih->bit_depth; color_type=ih->color_type; }
+            if(manual){
+                struct png_ihdr_manual ih; memcpy(&ih,data,13);
+                w = mz_bswap32(ih.width);
+                h = mz_bswap32(ih.height);
+                bit_depth=ih.bit_depth; color_type=ih.color_type;
+            } else {
+                const struct png_ihdr_attr *ih=(const struct png_ihdr_attr*)data;
+                w = READ_BE32_ATTR(ih->width);
+                h = READ_BE32_ATTR(ih->height);
+                bit_depth=ih->bit_depth; color_type=ih->color_type;
+            }
             gotIHDR=1; interlace = data[12]; if(bit_depth!=8){ fprintf(stderr,"PNG only 8-bit supported\n"); free(data); goto fail; }
             if(interlace){ /* Adam7 handled later */ }
         } else if(!strcmp(type,"IDAT")){
+            idat_count++;
             if(compSize+length > compCap){ size_t nc = (compCap?compCap*2:65536); while(nc < compSize+length) nc*=2; unsigned char *tmp=(unsigned char*)realloc(compressed,nc); if(!tmp){ free(data); goto fail; } compressed=tmp; compCap=nc; }
             memcpy(compressed+compSize,data,length); compSize+=length;
         } else if(!strcmp(type,"PLTE")){
@@ -63,11 +84,11 @@ static int load_png_stream(FILE *f, int manual, int decode_pixels, ImageData *ou
         } else if(!strcmp(type,"tRNS")){
             free(trns); trns=(unsigned char*)malloc(length); memcpy(trns,data,length); trns_len=length; // Interpretation depends on color type; apply during expansion.
         } else if(!strcmp(type,"gAMA")){
-            if(length==4){ uint32_t g = (data[0]<<24)|(data[1]<<16)|(data[2]<<8)|data[3]; if(g) { gamma_val = g / 100000.0; have_gamma=1; } }
+            if(length==4){ uint32_t g = (data[0]<<24)|(data[1]<<16)|(data[2]<<8)|data[3]; if(g) { have_gamma=1; } }
         } else if(!strcmp(type,"sRGB")){
             if(length==1){ srgb_intent = data[0]; }
         } else if(!strcmp(type,"pHYs")){
-            if(length==9){ phys_ppux = (data[0]<<24)|(data[1]<<16)|(data[2]<<8)|data[3]; phys_ppuy = (data[4]<<24)|(data[5]<<16)|(data[6]<<8)|data[7]; phys_unit = data[8]; have_phys=1; }
+            if(length==9){ have_phys=1; }
         } else if(!strcmp(type,"iCCP")){
             // profile_name\0 compression_method compressed_profile...
             size_t i=0; while(i<length && data[i] && i<79) i++; /* name */
@@ -122,10 +143,10 @@ static int load_png_stream(FILE *f, int manual, int decode_pixels, ImageData *ou
         free(raw);
     } else {
         // Adam7 interlace
-        static const int pass_starts_x[7]={0,4,0,2,0,1,0};
-        static const int pass_starts_y[7]={0,0,4,0,2,0,1};
-        static const int pass_step_x[7]={8,8,4,4,2,2,1};
-        static const int pass_step_y[7]={8,8,8,4,4,2,2};
+    static const uint32_t pass_starts_x[7]={0,4,0,2,0,1,0};
+    static const uint32_t pass_starts_y[7]={0,0,4,0,2,0,1};
+    static const uint32_t pass_step_x[7]={8,8,4,4,2,2,1};
+    static const uint32_t pass_step_y[7]={8,8,8,4,4,2,2};
         // Precompute total decompressed size
         size_t total=0; uint32_t pass_w[7], pass_h[7];
         for(int p=0;p<7;p++){ uint32_t pw=0, ph=0; if(w>pass_starts_x[p]) pw = (w - pass_starts_x[p] + pass_step_x[p]-1)/pass_step_x[p]; if(h>pass_starts_y[p]) ph = (h - pass_starts_y[p] + pass_step_y[p]-1)/pass_step_y[p]; pass_w[p]=pw; pass_h[p]=ph; if(pw && ph) total += (size_t)ph * (1 + pw * bpp_raw); }
@@ -161,10 +182,11 @@ static int load_png_stream(FILE *f, int manual, int decode_pixels, ImageData *ou
     }
     out->pixels=pixels; out->channels=4;
     if(getenv("SSO_PNG_META")){
-        fprintf(stderr,"[png-meta] w=%u h=%u interlace=%d gamma=%s srgb_intent=%d phys=%s crc_mismatches=%u idat_chunks=%u palette=%u trns=%u adam7=%d\n",
+        fprintf(stderr,
+                "[png-meta] w=%u h=%u interlace=%d gamma=%s srgb_intent=%d phys=%s crc_mismatches=%u idat_chunks=%u palette=%u trns=%u adam7=%d\n",
                 w,h,interlace,
                 have_gamma?"yes":"no", srgb_intent, have_phys?"yes":"no", crc_mismatch_count,
-                idat_count, palette_entries, trns_len>0, interlace);
+                idat_count, (unsigned)palette_entries, trns_len>0, interlace);
     }
     return 0;
 fail:

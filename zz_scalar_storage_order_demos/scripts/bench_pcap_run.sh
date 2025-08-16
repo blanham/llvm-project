@@ -8,9 +8,9 @@ PERF=${PERF:-0}
 ATTR_S=(); MAN_S=()
 for ((r=0;r<REPS;r++)); do
   la=$("$BIN" "$TRACE" --bench=$ITERS 2>/dev/null | grep BENCH | tail -n1 || true)
-  va=$(echo "$la" | awk -F'per=' '{print $2}' | awk '{print $1}') ; [[ -n $va ]] && ATTR_S+=("$va")
+  va=$(echo "$la" | awk -F'per=' '{print $2}' | awk '{print $1}') ; va=${va%s}; [[ -n $va ]] && ATTR_S+=("$va")
   lm=$("$BIN" "$TRACE" --manual --bench=$ITERS 2>/dev/null | grep BENCH | tail -n1 || true)
-  vm=$(echo "$lm" | awk -F'per=' '{print $2}' | awk '{print $1}') ; [[ -n $vm ]] && MAN_S+=("$vm")
+  vm=$(echo "$lm" | awk -F'per=' '{print $2}' | awk '{print $1}') ; vm=${vm%s}; [[ -n $vm ]] && MAN_S+=("$vm")
 done
 STATS=$(ATTR_LIST="${ATTR_S[*]}" MAN_LIST="${MAN_S[*]}" python3 - <<'PY'
 import os,statistics,json

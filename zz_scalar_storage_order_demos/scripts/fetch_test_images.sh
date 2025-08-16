@@ -31,8 +31,14 @@ if ! fetch "https://upload.wikimedia.org/wikipedia/commons/3/3e/Rick_Astley_perf
     fetch "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3e/Rick_Astley_performing_at_Let%27s_Rock_Bristol%2C_2014.jpg/640px-Rick_Astley_performing_at_Let%27s_Rock_Bristol%2C_2014.jpg" rick_astley_2014.jpg || true
   fi
 fi
-fetch "https://upload.wikimedia.org/wikipedia/commons/8/85/Steve_Jobs_Headshot_2010-CROP_%28cropped_2%29.jpg" steve_jobs_headshot.jpg
-fetch "https://upload.wikimedia.org/wikipedia/commons/4/4d/Feeding_the_chickens%2C_by_Walter_Frederick_Osborne.jpg" chickens_painting.jpg
+# Steve Jobs headshot (CC BY-SA 3.0) primary + fallback (filename hash path changed)
+if ! fetch "https://upload.wikimedia.org/wikipedia/commons/d/dc/Steve_Jobs_Headshot_2010-CROP_%28cropped_2%29.jpg" steve_jobs_headshot.jpg; then
+  fetch "https://upload.wikimedia.org/wikipedia/commons/8/85/Steve_Jobs_Headshot_2010-CROP_%28cropped_2%29.jpg" steve_jobs_headshot.jpg || true
+fi
+if ! fetch "https://upload.wikimedia.org/wikipedia/commons/c/c9/Feeding_the_chickens%2C_by_Walter_Frederick_Osborne.jpg" chickens_painting.jpg; then
+  # Fallback to older hash path variant if new one missing
+  fetch "https://upload.wikimedia.org/wikipedia/commons/4/4d/Feeding_the_chickens%2C_by_Walter_Frederick_Osborne.jpg" chickens_painting.jpg || true
+fi
 
 echo "Downloaded images to $PWD"
 cat <<'ATTRIB'

@@ -9,11 +9,11 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 VIEWER_BIN=$(SAN=$SAN bash "$SCRIPT_DIR/build_image_viewer.sh")
 {
   echo '{'
-  echo '  "generated_at": '"$(date +%s)",'
-  echo '  "iterations_per_run": '$ITERS','
-  echo '  "repetitions": '$REPS','
-  echo '  "sanitized": '"$SAN",','
-  echo '  "perf": '"$PERF",','
+  echo '  "generated_at": '"$(date +%s)",
+  echo '  "iterations_per_run": '$ITERS,
+  echo '  "repetitions": '$REPS,
+  echo '  "sanitized": '"$SAN",
+  echo '  "perf": '"$PERF",
   echo '  "images": ['
 } > "$OUT_JSON"
 FIRST=1; MISM=0
@@ -31,11 +31,10 @@ for IMG in "$@"; do
   PNG_META_LINE=$(grep '^\[png-meta\]' "$META_FILE" | tail -n1 || true)
   PNG_JSON=null
   if [[ -n "$PNG_META_LINE" ]]; then
-    PNG_JSON=$(python3 - <<PY
+  PNG_JSON=$(python3 - <<PY
 line="""$PNG_META_LINE"""
 import re,json
 fields=dict(re.findall(r'(crc_mismatches|idat_chunks|palette|trns|adam7)=([0-9]+)', line))
-# rename palette->palette_entries
 if 'palette' in fields: fields['palette_entries']=fields.pop('palette')
 print(json.dumps(fields))
 PY
@@ -55,12 +54,11 @@ PY
   [ $FIRST -eq 0 ] && echo ',' >> "$OUT_JSON"; FIRST=0
   {
     echo '    {'
-    echo '      "file": '"""$IMG""",'
-    echo '      "format": '"""$FORMAT""",'
+    echo '      "file": "'$IMG'",'
+    echo '      "format": "'$FORMAT'",'
     echo '      "width": '$WIDTH','
     echo '      "height": '$HEIGHT','
     cat "$BENCH_TMP"
-    echo '      ,'  # bench fragment lacks trailing comma for meta
     echo '      "parsed_meta": { "png": '$PNG_JSON', "jpeg": '$JPEG_JSON' }'
     echo '    }'
   } >> "$OUT_JSON"

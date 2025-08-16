@@ -8,32 +8,28 @@ REPS=${REPS:-5}; PERF=${PERF:-0}; SAN=${SAN:-0}
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 BIN=$(SAN=$SAN bash "$SCRIPT_DIR/build_pcap_dumper.sh")
 {
-  echo '{'
-  echo '  "generated_at": '"$(date +%s)",'
-  echo '  "iterations_per_run": '$ITERS','
-  echo '  "repetitions": '$REPS','
-  echo '  "sanitized": '"$SAN",','
-  echo '  "perf": '"$PERF",','
-  echo '  "traces": ['
+  printf '{\n'
+  printf '  "generated_at": %s,\n' "$(date +%s)"
+  printf '  "iterations_per_run": %s,\n' "$ITERS"
+  printf '  "repetitions": %s,\n' "$REPS"
+  printf '  "sanitized": %s,\n' "$SAN"
+  printf '  "perf": %s,\n' "$PERF"
+  printf '  "traces": [\n'
 } > "$OUT_JSON"
 FIRST=1
 for TRACE in "$@"; do
-  [ -f "$TRACE" ] || { echo "Skip missing $TRACE" >&2; continue; }
+  if [ ! -f "$TRACE" ]; then echo "Skip missing $TRACE" >&2; continue; fi
   TMP=$(mktemp)
-  PERF=$PERF REPS=$REPS bash "$SCRIPT_DIR/bench_pcap_run.sh" "$BIN" "$TRACE" $ITERS $REPS > "$TMP"
-  [ $FIRST -eq 0 ] && echo ',' >> "$OUT_JSON"; FIRST=0
+  PERF=$PERF REPS=$REPS bash "$SCRIPT_DIR/bench_pcap_run.sh" "$BIN" "$TRACE" $ITERS $REPS > "$TMP" || true
+  if [ $FIRST -eq 0 ]; then echo ',' >> "$OUT_JSON"; fi; FIRST=0
   {
-    echo '    {'
-    echo '      "file": '"""$TRACE""",'
+    printf '    {\n'
+    printf '      "file": "%s",\n' "$TRACE"
+    # Bench fragment already indented by bench script
     cat "$TMP"
-    echo '    }'
+    printf '    }'
   } >> "$OUT_JSON"
   rm -f "$TMP"
-
 done
-{
-  echo ''
-  echo '  ]'
-  echo '}'
-} >> "$OUT_JSON"
+echo -e '\n  ]\n}' >> "$OUT_JSON"
 echo "Wrote modular pcap benchmark JSON to $OUT_JSON" >&2

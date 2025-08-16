@@ -1,0 +1,73 @@
+{
+  "generated_at": 1755299550,
+  "iterations_per_run": 5,
+  "repetitions": 5,
+  "sanitized": 0,
+  "perf": 0,
+  "images": [
+    {
+      "file": "zz_scalar_storage_order_demos/test_images/LLVM_logo.png",
+      "format": "PNG",
+      "width": 399,
+      "height": 250,
+  "attr_per_s":  0.0005358,
+  "attr_std":  0.00019948774398443627,
+  "manual_per_s":  0.0005674,
+  "manual_std":  0.0001248993194537104,
+  "speedup":  1.058977230309817,
+  "pixels_match": true,
+  "sha256": { "attr": "f4ff80ac69246fecf6a5007cd854a30e565c17ba73aad00ba30b0a9c7b1619b9", "manual": "f4ff80ac69246fecf6a5007cd854a30e565c17ba73aad00ba30b0a9c7b1619b9" },
+  "perf": { "attr": { "cycles": null, "instructions": null }, "manual": { "cycles": null, "instructions": null } },
+      "parsed_meta": { "png": {"crc_mismatches": "0", "idat_chunks": "2", "trns": "0", "adam7": "0", "palette_entries": "0"}, "jpeg": null }
+    }
+,
+    {
+      "file": "zz_scalar_storage_order_demos/test_images/chickens_painting.jpg",
+      "format": "JPEG",
+      "width": 2632,
+      "height": 3425,
+  "attr_per_s":  0.0009894,
+  "attr_std":  0.00014310639398713116,
+  "manual_per_s":  0.0009444,
+  "manual_std":  6.966376389486858e-05,
+  "speedup":  0.9545178896300788,
+  "pixels_match": true,
+  "sha256": { "attr": "ea0ec7a27e98c5c77604ba6834be3d1191ae1d128266c41ea08773940e2dcfce", "manual": "ea0ec7a27e98c5c77604ba6834be3d1191ae1d128266c41ea08773940e2dcfce" },
+  "perf": { "attr": { "cycles": null, "instructions": null }, "manual": { "cycles": null, "instructions": null } },
+      "parsed_meta": { "png": null, "jpeg": {"restart_interval": "0", "progressive": "0"} }
+    }
+,
+    {
+      "file": "zz_scalar_storage_order_demos/test_images/rick_astley_2014.jpg",
+      "format": "JPEG",
+      "width": 1024,
+      "height": 1470,
+  "attr_per_s":  0.0001424,
+  "attr_std":  3.77359245282264e-06,
+  "manual_per_s":  0.0001426,
+  "manual_std":  5.00399840127872e-06,
+  "speedup":  1.0014044943820226,
+  "pixels_match": true,
+  "sha256": { "attr": "85c9f04fddff746478b80212f216098ed6711bb5742387b879c0175557a04b82", "manual": "85c9f04fddff746478b80212f216098ed6711bb5742387b879c0175557a04b82" },
+  "perf": { "attr": { "cycles": null, "instructions": null }, "manual": { "cycles": null, "instructions": null } },
+      "parsed_meta": { "png": null, "jpeg": {"restart_interval": "0", "progressive": "0"} }
+    }
+,
+    {
+      "file": "zz_scalar_storage_order_demos/test_images/steve_jobs_headshot.jpg",
+      "format": "JPEG",
+      "width": 3026,
+      "height": 2929,
+  "attr_per_s":  0.0005102,
+  "attr_std":  3.980653212727781e-05,
+  "manual_per_s":  0.0004918,
+  "manual_std":  1.2623787070447587e-05,
+  "speedup":  0.9639357114856919,
+  "pixels_match": true,
+  "sha256": { "attr": "72de5760dd19c1fa8efab8695989744d15379615f5cd5198b015ac1630258862", "manual": "72de5760dd19c1fa8efab8695989744d15379615f5cd5198b015ac1630258862" },
+  "perf": { "attr": { "cycles": null, "instructions": null }, "manual": { "cycles": null, "instructions": null } },
+      "parsed_meta": { "png": null, "jpeg": {"restart_interval": "0", "progressive": "0"} }
+    }
+
+  ]
+}

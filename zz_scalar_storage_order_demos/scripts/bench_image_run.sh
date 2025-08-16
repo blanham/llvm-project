@@ -14,9 +14,13 @@ PIX_MATCH=false; [[ -n "$SHA_ATTR" && "$SHA_ATTR" == "$SHA_MAN" ]] && PIX_MATCH=
 ATTR_S=(); MAN_S=()
 for ((r=0;r<REPS;r++)); do
   l=$("$VIEWER" "$IMG" --bench=$ITERS 2>/dev/null | grep BENCH | tail -n1 || true)
-  v=$(echo "$l" | awk -F'per=' '{print $2}' | awk '{print $1}') ; [[ -n $v ]] && ATTR_S+=("$v")
+  v=$(echo "$l" | awk -F'per=' '{print $2}' | awk '{print $1}')
+  v=${v%s}
+  [[ -n $v ]] && ATTR_S+=("$v")
   l=$("$VIEWER" "$IMG" --manual --bench=$ITERS 2>/dev/null | grep BENCH | tail -n1 || true)
-  v=$(echo "$l" | awk -F'per=' '{print $2}' | awk '{print $1}') ; [[ -n $v ]] && MAN_S+=("$v")
+  v=$(echo "$l" | awk -F'per=' '{print $2}' | awk '{print $1}')
+  v=${v%s}
+  [[ -n $v ]] && MAN_S+=("$v")
  done
 STATS=$(ATTR_LIST="${ATTR_S[*]}" MAN_LIST="${MAN_S[*]}" python3 - <<'PY'
 import os,statistics,json
@@ -56,5 +60,5 @@ cat <<JSON
   "speedup": ${SPEEDUP:-null},
   "pixels_match": $PIX_MATCH,
   "sha256": { "attr": "${SHA_ATTR:-}", "manual": "${SHA_MAN:-}" },
-  "perf": { "attr": { "cycles": ${ATTR_CYC:-null}, "instructions": ${ATTR_INS:-null} }, "manual": { "cycles": ${MAN_CYC:-null}, "instructions": ${MAN_INS:-null} } }
+  "perf": { "attr": { "cycles": ${ATTR_CYC:-null}, "instructions": ${ATTR_INS:-null} }, "manual": { "cycles": ${MAN_CYC:-null}, "instructions": ${MAN_INS:-null} } },
 JSON

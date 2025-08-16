@@ -1,0 +1,17 @@
+{
+  "generated_at": 1755299716,
+  echo  iterations_per_run: $ITERS,
+  echo  repetitions: $REPS,
+  echo  sanitized: "$SAN",,
+  echo  perf: "$PERF",,
+  echo  traces: [
+} > "$OUT_JSON"
+FIRST=1
+for TRACE in "$@"; do
+  [ -f "$TRACE" ] || { echo "Skip missing $TRACE" >&2; continue; }
+  TMP=$(mktemp)
+  PERF=$PERF REPS=$REPS bash "$SCRIPT_DIR/bench_pcap_run.sh" "$BIN" "$TRACE" $ITERS $REPS > "$TMP"
+  [ $FIRST -eq 0 ] && echo , >> "$OUT_JSON"; FIRST=0
+  {
+    echo  {
+    echo  file: """$TRACE""",
