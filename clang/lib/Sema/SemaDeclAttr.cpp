@@ -1197,6 +1197,23 @@ static void handlePackedAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
     S.Diag(AL.getLoc(), diag::warn_attribute_ignored) << AL;
 }
 
+static void handleScalarStorageOrderAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
+  auto *RD = dyn_cast<RecordDecl>(D);
+  if (!RD) {
+    S.Diag(AL.getLoc(), diag::warn_attribute_ignored) << AL;
+    return;
+  }
+
+  ScalarStorageOrderAttr::EndianType Endianness;
+  if (!ScalarStorageOrderAttr::ConvertStrToEndianType(AL.getArgAsIdent(0)->Ident->getName(),
+                                                       Endianness)) {
+    S.Diag(AL.getLoc(), diag::warn_attribute_ignored) << AL;
+    return;
+  }
+
+  RD->addAttr(::new (S.Context) ScalarStorageOrderAttr(S.Context, AL, Endianness));
+}
+
 static void handlePreferredName(Sema &S, Decl *D, const ParsedAttr &AL) {
   auto *RD = cast<CXXRecordDecl>(D);
   ClassTemplateDecl *CTD = RD->getDescribedClassTemplate();
@@ -7408,6 +7425,9 @@ ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D, const ParsedAttr &AL,
     break;
   case ParsedAttr::AT_Packed:
     handlePackedAttr(S, D, AL);
+    break;
+  case ParsedAttr::AT_ScalarStorageOrder:
+    handleScalarStorageOrderAttr(S, D, AL);
     break;
   case ParsedAttr::AT_PreferredName:
     handlePreferredName(S, D, AL);

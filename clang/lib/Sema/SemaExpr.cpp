@@ -14576,6 +14576,38 @@ QualType Sema::CheckAddressOfOperand(ExprResult &OrigOp, SourceLocation OpLoc) {
     }
   }
 
+  // Check for scalar_storage_order restrictions on MemberExpr
+  if (auto *ME = dyn_cast<MemberExpr>(op)) {
+    if (auto *FD = dyn_cast<FieldDecl>(ME->getMemberDecl())) {
+      if (auto *RD = dyn_cast<RecordDecl>(FD->getDeclContext())) {
+        if (auto *SSO = RD->getAttr<ScalarStorageOrderAttr>()) {
+          bool IsReverse = false;
+          if (SSO->getEndianness() == ScalarStorageOrderAttr::BigEndian) {
+            IsReverse = !Context.getTargetInfo().isBigEndian();
+          } else {
+            IsReverse = Context.getTargetInfo().isBigEndian();
+          }
+
+          if (IsReverse) {
+            QualType FieldType = FD->getType();
+            // Check if it's a scalar field
+            if (FieldType->isScalarType() && !FieldType->isPointerType()) {
+              Diag(OpLoc, diag::err_scalar_storage_order_address_of_scalar_field);
+              return QualType();
+            }
+            // Check if it's an array of scalars
+            if (const auto *AT = Context.getAsArrayType(FieldType)) {
+              QualType ElemType = AT->getElementType();
+              if (ElemType->isScalarType() && !ElemType->isPointerType()) {
+                Diag(OpLoc, diag::warn_scalar_storage_order_address_of_array_field);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   if (getLangOpts().C99) {
     // Implement C99-only parts of addressof rules.
     if (UnaryOperator* uOp = dyn_cast<UnaryOperator>(op)) {
@@ -14706,6 +14738,36 @@ QualType Sema::CheckAddressOfOperand(ExprResult &OrigOp, SourceLocation OpLoc) {
       // Okay: we can take the address of a field.
       // Could be a pointer to member, though, if there is an explicit
       // scope qualifier for the class.
+
+      // Check for scalar_storage_order restrictions
+      if (auto *FD = dyn_cast<FieldDecl>(dcl)) {
+        if (auto *RD = dyn_cast<RecordDecl>(FD->getDeclContext())) {
+          if (auto *SSO = RD->getAttr<ScalarStorageOrderAttr>()) {
+            bool IsReverse = false;
+            if (SSO->getEndianness() == ScalarStorageOrderAttr::BigEndian) {
+              IsReverse = !Context.getTargetInfo().isBigEndian();
+            } else {
+              IsReverse = Context.getTargetInfo().isBigEndian();
+            }
+
+            if (IsReverse) {
+              QualType FieldType = FD->getType();
+              // Check if it's a scalar field
+              if (FieldType->isScalarType() && !FieldType->isPointerType()) {
+                Diag(OpLoc, diag::err_scalar_storage_order_address_of_scalar_field);
+                return QualType();
+              }
+              // Check if it's an array of scalars
+              if (const auto *AT = Context.getAsArrayType(FieldType)) {
+                QualType ElemType = AT->getElementType();
+                if (ElemType->isScalarType() && !ElemType->isPointerType()) {
+                  Diag(OpLoc, diag::warn_scalar_storage_order_address_of_array_field);
+                }
+              }
+            }
+          }
+        }
+      }
 
       // [C++26] [expr.prim.id.general]
       // If an id-expression E denotes a non-static non-type member

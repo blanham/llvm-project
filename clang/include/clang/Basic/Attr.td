@@ -2995,6 +2995,15 @@ def Packed : InheritableAttr {
   let Documentation = [Undocumented];
 }
 
+def ScalarStorageOrder : InheritableAttr {
+  let Spellings = [GCC<"scalar_storage_order">];
+  let Args = [EnumArgument<"Endianness", "EndianType", /*is_string=*/true,
+                           ["big-endian", "little-endian"],
+                           ["BigEndian", "LittleEndian"]>];
+  let Subjects = SubjectList<[Record], ErrorDiag>;
+  let Documentation = [ScalarStorageOrderDocs];
+}
+
 def IntelOclBicc : DeclOrTypeAttr {
   let Spellings = [Clang<"intel_ocl_bicc", 0>];
 //  let Subjects = [Function, ObjCMethod];

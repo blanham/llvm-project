@@ -3446,6 +3446,13 @@ def err_attribute_pointers_only : Error<warn_attribute_pointers_only.Summary>;
 def err_attribute_integers_only : Error<
   "%0 attribute argument may only refer to a function parameter of integer "
   "type">;
+def err_scalar_storage_order_not_supported : Error<
+  "scalar_storage_order attribute is not supported on targets without a uniform scalar storage order">;
+def err_scalar_storage_order_address_of_scalar_field : Error<
+  "address of scalar field with reverse storage order is not allowed">;
+def warn_scalar_storage_order_address_of_array_field : Warning<
+  "address of array field with scalar component and reverse storage order requested">,
+  InGroup<DiagGroup<"scalar-storage-order">>;
 def warn_attribute_return_pointers_only : Warning<
   "%0 attribute only applies to return values that are pointers">,
   InGroup<IgnoredAttributes>;

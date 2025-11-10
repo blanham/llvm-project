@@ -9674,3 +9674,47 @@ silence diagnostics with code like:
   __attribute__((nonstring)) char NotAStr[3] = "foo"; // Not diagnosed
   }];
 }
+
+def ScalarStorageOrderDocs : Documentation {
+  let Category = DocCatDecl;
+  let Content = [{
+The ``scalar_storage_order`` attribute specifies the storage order (endianness)
+of scalar fields in a struct or union. This attribute accepts a single argument
+which must be either ``"big-endian"`` or ``"little-endian"``.
+
+When attached to a struct or union, this attribute sets the storage order of
+scalar fields and array fields whose component is scalar. The attribute has no
+effect on fields which are themselves a union, struct, or array whose component
+is a union or struct. It is possible for these fields to have a different scalar
+storage order than the enclosing type.
+
+Note that neither pointer nor vector fields are considered scalar fields in this
+context, so the attribute has no effect on these fields.
+
+This attribute is supported only for targets that use a uniform default scalar
+storage order (i.e., targets that store scalars either all in big-endian or all
+in little-endian).
+
+Additional restrictions are enforced for types with reverse scalar storage order
+(i.e., different from the target's native byte order):
+
+* Taking the address of a scalar field of a struct or union with reverse scalar
+  storage order is not permitted and yields an error.
+* Taking the address of an array field whose component is scalar yields a warning,
+  unless ``-Wno-scalar-storage-order`` is specified.
+* Taking the address of a struct or union with reverse scalar storage order is permitted.
+
+These restrictions exist because the storage order attribute is lost when the
+address of a scalar is taken. Moreover, the use of type punning or aliasing to
+toggle the storage order is not supported; if a given scalar object can be accessed
+through distinct types that assign different storage orders to it, the behavior
+is undefined.
+
+.. code-block:: c
+
+  struct __attribute__((scalar_storage_order("big-endian"))) S {
+    int x;        // Stored in big-endian order
+    short y[4];   // Array elements stored in big-endian order
+  };
+  }];
+}
