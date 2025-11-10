@@ -17,6 +17,22 @@ union __attribute__((scalar_storage_order("big-endian"))) U1 {
   short y;
 };
 
+// Test that pointers and vectors are not affected
+struct __attribute__((scalar_storage_order("big-endian"))) S_Ptr {
+  int *ptr;  // Pointers not affected
+  int value; // Scalars are affected
+};
+
+// Test nested structs
+struct Inner {
+  int x;
+};
+
+struct __attribute__((scalar_storage_order("big-endian"))) Outer {
+  int scalar;
+  struct Inner inner; // Nested structs not affected
+};
+
 // Test address-of restrictions for reverse storage order fields
 // On little-endian systems
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
@@ -40,6 +56,9 @@ void test_address_taking() {
 
   // OK: taking address of nested struct field (struct/union fields are not affected)
   int *p3 = &s.nested_struct.nested; // OK
+
+  // OK: Taking address of the struct itself is allowed
+  struct S3 *p4 = &s; // OK
 }
 
 #endif
@@ -66,3 +85,10 @@ void test_address_taking_be() {
 
 // Test that the attribute is ignored on non-record types
 int __attribute__((scalar_storage_order("big-endian"))) x; // expected-warning {{'scalar_storage_order' attribute ignored}}
+
+// Test that normal access (not taking address) works fine
+void test_normal_access() {
+  struct S1 s;
+  s.x = 42;  // OK
+  int y = s.y; // OK
+}

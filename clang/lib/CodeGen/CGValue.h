@@ -234,6 +234,9 @@ class LValue {
   // this lvalue.
   bool Nontemporal : 1;
 
+  // This flag indicates if byte-swapping is needed due to scalar_storage_order.
+  bool NeedsByteSwap : 1;
+
   LValueBaseInfo BaseInfo;
   TBAAAccessInfo TBAAInfo;
 
@@ -260,6 +263,7 @@ private:
     this->Ivar = this->ObjIsArray = this->NonGC = this->GlobalObjCRef = false;
     this->ImpreciseLifetime = false;
     this->Nontemporal = false;
+    this->NeedsByteSwap = false;
     this->ThreadLocalRef = false;
     this->BaseIvarExp = nullptr;
   }
@@ -317,6 +321,9 @@ public:
   }
   bool isNontemporal() const { return Nontemporal; }
   void setNontemporal(bool Value) { Nontemporal = Value; }
+
+  bool needsByteSwap() const { return NeedsByteSwap; }
+  void setNeedsByteSwap(bool Value) { NeedsByteSwap = Value; }
 
   bool isObjCWeak() const {
     return Quals.getObjCGCAttr() == Qualifiers::Weak;

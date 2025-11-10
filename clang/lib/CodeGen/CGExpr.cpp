@@ -2013,9 +2013,16 @@ llvm::Value *CodeGenFunction::emitScalarConstant(
 
 llvm::Value *CodeGenFunction::EmitLoadOfScalar(LValue lvalue,
                                                SourceLocation Loc) {
-  return EmitLoadOfScalar(lvalue.getAddress(), lvalue.isVolatile(),
+  llvm::Value *Val = EmitLoadOfScalar(lvalue.getAddress(), lvalue.isVolatile(),
                           lvalue.getType(), Loc, lvalue.getBaseInfo(),
                           lvalue.getTBAAInfo(), lvalue.isNontemporal());
+
+  // Apply byte swapping if needed for scalar_storage_order
+  if (lvalue.needsByteSwap() && Val && Val->getType()->isIntegerTy()) {
+    Val = Builder.CreateIntrinsic(Val->getType(), llvm::Intrinsic::bswap, {Val});
+  }
+
+  return Val;
 }
 
 static bool getRangeForType(CodeGenFunction &CGF, QualType Ty,
@@ -2339,6 +2346,11 @@ void CodeGenFunction::EmitStoreOfScalar(llvm::Value *value, LValue lvalue,
   if (lvalue.getType()->isConstantMatrixType()) {
     EmitStoreOfMatrixScalar(value, lvalue, isInit, *this);
     return;
+  }
+
+  // Apply byte swapping if needed for scalar_storage_order
+  if (lvalue.needsByteSwap() && value && value->getType()->isIntegerTy()) {
+    value = Builder.CreateIntrinsic(value->getType(), llvm::Intrinsic::bswap, {value});
   }
 
   EmitStoreOfScalar(value, lvalue.getAddress(), lvalue.isVolatile(),
@@ -4798,6 +4810,29 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
 
   LValue LV = MakeAddrLValue(Addr, E->getType(), EltBaseInfo, EltTBAAInfo);
 
+  // Check if the base is from an array field with scalar_storage_order
+  // We need to handle the case like: struct_with_sso.array[i]
+  if (auto *ME = dyn_cast<MemberExpr>(E->getBase()->IgnoreParenImpCasts())) {
+    if (auto *FD = dyn_cast<FieldDecl>(ME->getMemberDecl())) {
+      if (auto *RD = dyn_cast<RecordDecl>(FD->getDeclContext())) {
+        if (auto *SSO = RD->getAttr<ScalarStorageOrderAttr>()) {
+          bool IsReverse = false;
+          if (SSO->getEndianness() == ScalarStorageOrderAttr::BigEndian) {
+            IsReverse = !getContext().getTargetInfo().isBigEndian();
+          } else {
+            IsReverse = getContext().getTargetInfo().isBigEndian();
+          }
+
+          // Apply byte swapping if the array element is scalar
+          if (IsReverse && E->getType()->isScalarType() &&
+              !E->getType()->isPointerType() && !E->getType()->isVectorType()) {
+            LV.setNeedsByteSwap(true);
+          }
+        }
+      }
+    }
+  }
+
   if (getLangOpts().ObjC &&
       getLangOpts().getGC() != LangOptions::NonGC) {
     LV.setNonGC(!E->isOBJCGCCandidate(getContext()));
@@ -5459,6 +5494,22 @@ LValue CodeGenFunction::EmitLValueForField(LValue base, const FieldDecl *field,
   // __weak attribute on a field is ignored.
   if (LV.getQuals().getObjCGCAttr() == Qualifiers::Weak)
     LV.getQuals().removeObjCGCAttr();
+
+  // Check if byte-swapping is needed for scalar_storage_order
+  if (auto *SSO = rec->getAttr<ScalarStorageOrderAttr>()) {
+    bool IsReverse = false;
+    if (SSO->getEndianness() == ScalarStorageOrderAttr::BigEndian) {
+      IsReverse = !getContext().getTargetInfo().isBigEndian();
+    } else {
+      IsReverse = getContext().getTargetInfo().isBigEndian();
+    }
+
+    // Only set NeedsByteSwap for scalar types (excluding pointers and vectors)
+    if (IsReverse && FieldType->isScalarType() &&
+        !FieldType->isPointerType() && !FieldType->isVectorType()) {
+      LV.setNeedsByteSwap(true);
+    }
+  }
 
   return LV;
 }
