@@ -1,0 +1,50 @@
+name: IA-16 upstream file export
+
+on:
+  push:
+    branches:
+      - automation/ia16-upstream-file-export
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: automation/ia16-upstream-file-export
+          fetch-depth: 1
+
+      - name: Collect public upstream source seams
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p export
+          files=(
+            clang/lib/Basic/Targets/X86.cpp
+            clang/lib/Basic/Targets/X86.h
+            clang/lib/CodeGen/CodeGenTypes.cpp
+            clang/lib/Sema/SemaType.cpp
+            llvm/lib/Target/X86/X86ExpandPseudo.cpp
+            llvm/lib/Target/X86/X86FrameLowering.cpp
+            llvm/lib/Target/X86/X86ISelLoweringCall.cpp
+            llvm/lib/Target/X86/X86InstrCompiler.td
+            llvm/lib/Target/X86/X86InstrFragments.td
+            llvm/lib/TargetParser/TargetDataLayout.cpp
+          )
+          for file in "${files[@]}"; do
+            install -D -m 0644 "$file" "export/$file"
+          done
+          printf '%s\n' '${{ github.sha }}' > export/UPSTREAM_COMMIT
+          tar -C export -czf ia16-upstream-source-seams.tar.gz .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ia16-upstream-source-seams
+          path: ia16-upstream-source-seams.tar.gz
+          if-no-files-found: error
+          retention-days: 1
