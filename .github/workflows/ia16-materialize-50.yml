@@ -1,0 +1,187 @@
+name: IA-16 materialize far-call source closure
+
+on:
+  push:
+    branches:
+      - automation/ia16-materialize-50-control
+    paths:
+      - '.github/workflows/ia16-materialize-50.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ia16-materialize-50
+  cancel-in-progress: false
+
+jobs:
+  materialize-build-test-and-push:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out control branch and configure authenticated origin
+        uses: actions/checkout@v4
+        with:
+          ref: automation/ia16-materialize-50-control
+          fetch-depth: 1
+          show-progress: false
+
+      - name: Fetch and verify exact reconciled source branch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add source https://github.com/ChickenParts/llvm.git
+          git fetch --no-tags --depth=1 source \
+            refs/heads/feature/ia16-dogfood-unblock-49
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = \
+            4fe376ee5b2891d521ce8079212966c9fa4808b4
+          test "$(git hash-object llvm/lib/Target/X86/X86ISelLoweringCall.cpp)" = \
+            3f8d0f309fd0750706334b910fcc240fe60d777c
+          test "$(git hash-object llvm/lib/Target/X86/X86FrameLowering.cpp)" = \
+            f09820a2e9e577fd7784a58b69754fcc9c146526
+          test "$(git hash-object llvm/lib/Target/X86/X86MCInstLower.cpp)" = \
+            374290770c5bf4e9fc3e4021622a84d8c79e0b6b
+          test -z "$(git status --porcelain)"
+
+      - name: Apply fail-closed source completion and prove idempotence
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 -m py_compile \
+            utils/ia16/apply_far_call_completion.py \
+            utils/ia16/ia16_far_call_rewrite.py \
+            utils/ia16/ia16_far_frame_rewrite.py \
+            utils/ia16/ia16_far_mc_rewrite.py \
+            utils/ia16/tests/test_apply_far_call_completion.py
+          python3 utils/ia16/tests/test_apply_far_call_completion.py -v
+          python3 utils/ia16/apply_far_call_completion.py --check
+          python3 utils/ia16/apply_far_call_completion.py
+          git diff --check
+          mapfile -t changed < <(git diff --name-only)
+          test "${#changed[@]}" -eq 3
+          printf '%s\n' "${changed[@]}" | sort > changed.actual
+          printf '%s\n' \
+            llvm/lib/Target/X86/X86FrameLowering.cpp \
+            llvm/lib/Target/X86/X86ISelLoweringCall.cpp \
+            llvm/lib/Target/X86/X86MCInstLower.cpp | sort > changed.expected
+          diff -u changed.expected changed.actual
+          before="$(git diff --binary | sha256sum | cut -d' ' -f1)"
+          python3 utils/ia16/apply_far_call_completion.py
+          after="$(git diff --binary | sha256sum | cut -d' ' -f1)"
+          test "$before" = "$after"
+          git diff --stat
+
+      - name: Configure focused assertions build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S llvm -B build-ia16-far-call -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_ENABLE_ASSERTIONS=ON \
+            -DLLVM_ENABLE_PROJECTS='clang;lld' \
+            -DLLVM_TARGETS_TO_BUILD=X86 \
+            -DLLVM_INCLUDE_TESTS=ON \
+            -DLLVM_ENABLE_TERMINFO=OFF \
+            -DLLVM_ENABLE_ZLIB=OFF \
+            -DLLVM_ENABLE_ZSTD=OFF \
+            -DLLVM_ENABLE_LIBXML2=OFF \
+            -DLLVM_ENABLE_CURL=OFF \
+            -DLLVM_ENABLE_HTTPLIB=OFF \
+            -DLLVM_ENABLE_BINDINGS=OFF \
+            2>&1 | tee ia16-far-call-configure.log
+
+      - name: Build affected tools
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake --build build-ia16-far-call --parallel 4 --target \
+            clang llc llvm-mc llvm-objcopy llvm-objdump llvm-readobj ld.lld FileCheck \
+            2>&1 | tee ia16-far-call-build.log
+
+      - name: Run focused compiler, assembler, and linker regressions
+        shell: bash
+        run: |
+          set -euxo pipefail
+          build-ia16-far-call/bin/llvm-lit -sv \
+            clang/test/CodeGen/X86/ia16-far-call-address-spaces.c \
+            clang/test/Driver/ia16-memory-model.c \
+            clang/test/Driver/ia16-program-address-space.c \
+            llvm/test/CodeGen/X86/ia16/calling-conv.ll \
+            llvm/test/CodeGen/X86/ia16/calling-conventions.ll \
+            llvm/test/CodeGen/X86/ia16/far-call-address-spaces.ll \
+            llvm/test/CodeGen/X86/ia16/far-pointers.ll \
+            llvm/test/CodeGen/X86/ia16/data-layout-alignment.ll \
+            llvm/test/MC/X86/ia16-elf-reloc-widths.s \
+            llvm/test/MC/X86/ia16-elf-segelf-aux.s \
+            llvm/test/MC/X86/ia16-elf-segelf-special-symbols.s \
+            llvm/test/MC/X86/ia16-elf-segelf-local-section.s \
+            lld/test/ELF/ia16-gnu-elf.s \
+            2>&1 | tee ia16-far-call-lit.log
+
+      - name: Emit and reparse all code-memory models at the 8086 floor
+        shell: bash
+        run: |
+          set -euxo pipefail
+          for model in small medium compact large; do
+            build-ia16-far-call/bin/clang \
+              -target ia16-none-elf -mcpu=8086 -mmemory-model="$model" \
+              -O1 -S clang/test/CodeGen/X86/ia16-far-call-address-spaces.c \
+              -o "ia16-far-call-${model}.s"
+            build-ia16-far-call/bin/llvm-mc \
+              -triple ia16-none-elf -mcpu=8086 -filetype=obj \
+              "ia16-far-call-${model}.s" \
+              -o "ia16-far-call-${model}.o"
+            build-ia16-far-call/bin/llvm-objdump -dr \
+              "ia16-far-call-${model}.o" \
+              > "ia16-far-call-${model}.objdump"
+            build-ia16-far-call/bin/llvm-readobj --relocations \
+              "ia16-far-call-${model}.o" \
+              > "ia16-far-call-${model}.readobj"
+            grep -Eq 'lcall|call[[:space:]]+far' \
+              "ia16-far-call-${model}.objdump"
+            grep -Eq 'lcall.*\(%bp\)|call[[:space:]]+far.*\(%bp\)' \
+              "ia16-far-call-${model}.objdump"
+            grep -Eq 'R_386_16[[:space:]]+far_external([[:space:]]|$)' \
+              "ia16-far-call-${model}.readobj"
+            grep -Eq 'R_386_SUB16[[:space:]]+far_external!([[:space:]]|$)' \
+              "ia16-far-call-${model}.readobj"
+            grep -Eq 'R_386_SEG16[[:space:]]+far_external!([[:space:]]|$)' \
+              "ia16-far-call-${model}.readobj"
+          done
+
+      - name: Commit validated backend source and publish successor branch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git diff --check
+          git add \
+            llvm/lib/Target/X86/X86FrameLowering.cpp \
+            llvm/lib/Target/X86/X86ISelLoweringCall.cpp \
+            llvm/lib/Target/X86/X86MCInstLower.cpp
+          test "$(git diff --cached --name-only | wc -l)" -eq 3
+          git commit -m 'fix(ia16): complete address-space far calls [skip ci]'
+          git push --force origin \
+            HEAD:refs/heads/feature/ia16-dogfood-unblock-50
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ia16-far-call-materialize-50-${{ github.run_id }}
+          path: |
+            changed.actual
+            changed.expected
+            ia16-far-call-configure.log
+            ia16-far-call-build.log
+            ia16-far-call-lit.log
+            ia16-far-call-*.s
+            ia16-far-call-*.o
+            ia16-far-call-*.objdump
+            ia16-far-call-*.readobj
+          if-no-files-found: ignore
+          retention-days: 14
