@@ -31,9 +31,9 @@ jobs:
           )
           for file in "${files[@]}"; do
             install -m 0644 "$file" "export/$file"
-            git hash-object "$file" | tee -a export/BLOB_SHA1S
+            printf '%s  %s\n' "$(git hash-object "$file")" "$file" | tee -a export/BLOB_SHA1S
           done
-          git rev-parse HEAD^ > export/UPSTREAM_BASE_COMMIT
+          printf '%s\n' 443ce5569ee9854cfef1139cf6b9cf05165e0902 > export/UPSTREAM_BASE_COMMIT
           tar -C export -czf ia16-pinned-backend-source.tar.gz .
 
       - uses: actions/upload-artifact@v4
