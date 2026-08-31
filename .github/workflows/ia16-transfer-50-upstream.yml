@@ -1,0 +1,102 @@
+name: IA-16 transfer validated branch 50 upstream
+
+on:
+  push:
+    branches:
+      - automation/ia16-materialize-50-control
+    paths:
+      - '.github/workflows/ia16-transfer-50-upstream.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ia16-transfer-50-upstream
+  cancel-in-progress: false
+
+jobs:
+  transfer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TARGET_TOKEN: ${{ secrets.IA16_REPO_TOKEN || secrets.CROSS_REPO_TOKEN || secrets.REPO_TOKEN || secrets.GH_PAT || secrets.GITHUB_PAT || secrets.PERSONAL_ACCESS_TOKEN || secrets.PAT }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: automation/ia16-materialize-50-control
+          fetch-depth: 1
+          show-progress: false
+
+      - name: Verify immutable validated candidate
+        id: verify
+        shell: bash
+        run: |
+          set -euxo pipefail
+          base=4fe376ee5b2891d521ce8079212966c9fa4808b4
+          git fetch --no-tags --depth=2 origin \
+            refs/heads/feature/ia16-dogfood-unblock-50
+          candidate="$(git rev-parse FETCH_HEAD)"
+          test "$(git rev-parse FETCH_HEAD^)" = "$base"
+          mapfile -t files < <(git diff-tree --no-commit-id --name-only -r "$candidate" | sort)
+          test "${#files[@]}" -eq 3
+          printf '%s\n' "${files[@]}" > files.actual
+          printf '%s\n' \
+            llvm/lib/Target/X86/X86FrameLowering.cpp \
+            llvm/lib/Target/X86/X86ISelLoweringCall.cpp \
+            llvm/lib/Target/X86/X86MCInstLower.cpp | sort > files.expected
+          diff -u files.expected files.actual
+          printf 'candidate=%s\n' "$candidate" >> "$GITHUB_OUTPUT"
+
+      - name: Require a successful branch-50 validation run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          gh api --paginate \
+            'repos/blanham/llvm-project/actions/workflows/ia16-materialize-50-v2.yml/runs?branch=automation%2Fia16-materialize-50-control&per_page=100' \
+            --jq '[.workflow_runs[] | select(.conclusion == "success")] | length' \
+            | grep -Eq '^[1-9][0-9]*$'
+
+      - name: Transfer with an explicitly configured cross-repository token
+        if: env.TARGET_TOKEN != ''
+        id: transfer
+        shell: bash
+        env:
+          CANDIDATE: ${{ steps.verify.outputs.candidate }}
+        run: |
+          set -euxo pipefail
+          base=4fe376ee5b2891d521ce8079212966c9fa4808b4
+          target_branch=feature/ia16-dogfood-unblock-50
+          current="$(curl -fsSL \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'User-Agent: ia16-transfer' \
+            https://api.github.com/repos/ChickenParts/llvm/branches/$target_branch \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"]["sha"])')"
+          git remote add upstream \
+            "https://x-access-token:${TARGET_TOKEN}@github.com/ChickenParts/llvm.git"
+          git push upstream \
+            "$CANDIDATE:refs/heads/$target_branch" \
+            --force-with-lease="refs/heads/$target_branch:$current"
+          printf 'old=%s\nnew=%s\n' "$current" "$CANDIDATE" > transfer-result.txt
+
+      - name: Record absence of a cross-repository secret
+        if: env.TARGET_TOKEN == ''
+        shell: bash
+        run: |
+          printf '%s\n' \
+            'No configured cross-repository token was available; no upstream ref was changed.' \
+            > transfer-result.txt
+          exit 1
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ia16-transfer-50-${{ github.run_id }}
+          path: |
+            files.actual
+            files.expected
+            transfer-result.txt
+          if-no-files-found: ignore
+          retention-days: 14
