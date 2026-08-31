@@ -1,0 +1,40 @@
+name: IA-16 control-branch cleanup
+
+on:
+  push:
+    branches:
+      - automation/ia16-materialize-50-control
+    paths:
+      - '.github/workflows/ia16-control-cleanup.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: automation/ia16-materialize-50-control
+          fetch-depth: 1
+          show-progress: false
+
+      - name: Remove temporary connector probes and this one-shot workflow
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          rm -f \
+            scratch-push-files-probe.txt \
+            scratch/connector-upload-probe.txt \
+            .github/workflows/ia16-control-cleanup.yml
+          rmdir scratch 2>/dev/null || true
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m 'chore(ia16): remove temporary transfer probes [skip ci]'
+            git push origin HEAD:automation/ia16-materialize-50-control
+          fi
