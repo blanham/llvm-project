@@ -1,0 +1,160 @@
+name: IA-16 signed branch 49 source materialization
+
+on:
+  push:
+    branches:
+      - automation/ia16-signed-materialize-49
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  materialize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Download exact branch 49 inputs and materialize source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf work export
+          mkdir -p \
+            work/llvm/lib/Target/X86 \
+            work/utils/ia16/tests \
+            export
+
+          download() {
+            local url="$1"
+            local destination="$2"
+            curl --fail --location --silent --show-error \
+              --retry 3 --retry-all-errors \
+              "$url" --output "$destination"
+          }
+
+          download 'https://raw.githubusercontent.com/ChickenParts/llvm/feature/ia16-dogfood-unblock-49/llvm/lib/Target/X86/X86ISelLoweringCall.cpp?token=AABKYBEH3HXRIDEZ34XSEBDKST3NZAA' \
+            work/llvm/lib/Target/X86/X86ISelLoweringCall.cpp
+          download 'https://raw.githubusercontent.com/ChickenParts/llvm/feature/ia16-dogfood-unblock-49/llvm/lib/Target/X86/X86FrameLowering.cpp?token=AABKYBESZNGLPSWYGQEHFW3KST3NZAA' \
+            work/llvm/lib/Target/X86/X86FrameLowering.cpp
+          download 'https://raw.githubusercontent.com/ChickenParts/llvm/feature/ia16-dogfood-unblock-49/llvm/lib/Target/X86/X86MCInstLower.cpp?token=AABKYBE2MHYTMVKAFHMJO63KST3NZAA' \
+            work/llvm/lib/Target/X86/X86MCInstLower.cpp
+          download 'https://raw.githubusercontent.com/ChickenParts/llvm/feature/ia16-dogfood-unblock-49/utils/ia16/apply_far_call_completion.py?token=AABKYBE5CXEDMQXUODEY7RLKST3RVAA' \
+            work/utils/ia16/apply_far_call_completion.py
+          download 'https://raw.githubusercontent.com/ChickenParts/llvm/feature/ia16-dogfood-unblock-49/utils/ia16/ia16_far_call_rewrite.py?token=AABKYBBRWYSSVGSWRI6WMGDKST3RVAA' \
+            work/utils/ia16/ia16_far_call_rewrite.py
+          download 'https://raw.githubusercontent.com/ChickenParts/llvm/feature/ia16-dogfood-unblock-49/utils/ia16/ia16_far_frame_rewrite.py?token=AABKYBBO63HMYZBNSRYJNDDKST3RVAA' \
+            work/utils/ia16/ia16_far_frame_rewrite.py
+          download 'https://raw.githubusercontent.com/ChickenParts/llvm/feature/ia16-dogfood-unblock-49/utils/ia16/ia16_far_mc_rewrite.py?token=AABKYBGGH7SVUJ7ZKOUB643KST3RVAA' \
+            work/utils/ia16/ia16_far_mc_rewrite.py
+          download 'https://raw.githubusercontent.com/ChickenParts/llvm/feature/ia16-dogfood-unblock-49/utils/ia16/tests/test_apply_far_call_completion.py?token=AABKYBECAOK66TYX4ZHBUJ3KST3SBAA' \
+            work/utils/ia16/tests/test_apply_far_call_completion.py
+
+          cd work
+
+          cat > /tmp/expected-inputs <<'EOF'
+          3f8d0f309fd0750706334b910fcc240fe60d777c  llvm/lib/Target/X86/X86ISelLoweringCall.cpp
+          f09820a2e9e577fd7784a58b69754fcc9c146526  llvm/lib/Target/X86/X86FrameLowering.cpp
+          374290770c5bf4e9fc3e4021622a84d8c79e0b6b  llvm/lib/Target/X86/X86MCInstLower.cpp
+          aa830ff07f01dd4fa3a1d215298a3a02f99147b7  utils/ia16/apply_far_call_completion.py
+          20978845f5526a9709d705e08ee2d9f06b5d2a73  utils/ia16/ia16_far_call_rewrite.py
+          630408fd2cf38b3fb32477bcc2592c7606bcfb08  utils/ia16/ia16_far_frame_rewrite.py
+          e895ff2a598cedc4cf1565a8ae83b2e16f05ff59  utils/ia16/ia16_far_mc_rewrite.py
+          6359aeb0a678e1f11be47bd1a9f4ef101a381b50  utils/ia16/tests/test_apply_far_call_completion.py
+          EOF
+
+          : > ../export/INPUT_BLOB_SHA1S
+          while read -r expected path; do
+            actual="$(git hash-object "$path")"
+            test "$actual" = "$expected"
+            printf '%s  %s\n' "$actual" "$path" >> ../export/INPUT_BLOB_SHA1S
+          done < /tmp/expected-inputs
+
+          python3 -m py_compile \
+            utils/ia16/apply_far_call_completion.py \
+            utils/ia16/ia16_far_call_rewrite.py \
+            utils/ia16/ia16_far_frame_rewrite.py \
+            utils/ia16/ia16_far_mc_rewrite.py \
+            utils/ia16/tests/test_apply_far_call_completion.py
+          python3 utils/ia16/tests/test_apply_far_call_completion.py -v \
+            2>&1 | tee ../export/CODEMOD_TESTS.log
+          python3 utils/ia16/apply_far_call_completion.py --check
+
+          git init --quiet
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add llvm utils
+          git commit --quiet -m baseline
+
+          python3 utils/ia16/apply_far_call_completion.py
+          git diff --check
+
+          mapfile -t changed < <(git diff --name-only)
+          test "${#changed[@]}" -eq 3
+          printf '%s\n' "${changed[@]}" | grep -Fx llvm/lib/Target/X86/X86ISelLoweringCall.cpp
+          printf '%s\n' "${changed[@]}" | grep -Fx llvm/lib/Target/X86/X86FrameLowering.cpp
+          printf '%s\n' "${changed[@]}" | grep -Fx llvm/lib/Target/X86/X86MCInstLower.cpp
+
+          generated=(
+            llvm/lib/Target/X86/X86ISelLoweringCall.cpp
+            llvm/lib/Target/X86/X86FrameLowering.cpp
+            llvm/lib/Target/X86/X86MCInstLower.cpp
+          )
+          : > ../export/GENERATED_BLOB_SHA1S
+          : > ../export/GENERATED_SHA256SUMS
+          for path in "${generated[@]}"; do
+            printf '%s  %s\n' "$(git hash-object "$path")" "$path" \
+              >> ../export/GENERATED_BLOB_SHA1S
+            sha256sum "$path" >> ../export/GENERATED_SHA256SUMS
+            install -D -m 0644 "$path" "../export/$path"
+          done
+          git diff --binary -- "${generated[@]}" \
+            > ../export/ia16-far-call-materialized.patch
+          git diff --stat -- "${generated[@]}" > ../export/DIFFSTAT
+          git status --short > ../export/GIT_STATUS
+
+          cp ../export/GENERATED_BLOB_SHA1S /tmp/generated-before
+          cp ../export/GENERATED_SHA256SUMS /tmp/generated-sha256-before
+          cp ../export/ia16-far-call-materialized.patch /tmp/patch-before
+
+          python3 utils/ia16/apply_far_call_completion.py
+          : > /tmp/generated-after
+          : > /tmp/generated-sha256-after
+          for path in "${generated[@]}"; do
+            printf '%s  %s\n' "$(git hash-object "$path")" "$path" \
+              >> /tmp/generated-after
+            sha256sum "$path" >> /tmp/generated-sha256-after
+          done
+          git diff --binary -- "${generated[@]}" > /tmp/patch-after
+          cmp /tmp/generated-before /tmp/generated-after
+          cmp /tmp/generated-sha256-before /tmp/generated-sha256-after
+          cmp /tmp/patch-before /tmp/patch-after
+
+          install -D -m 0644 utils/ia16/apply_far_call_completion.py \
+            ../export/utils/ia16/apply_far_call_completion.py
+          install -D -m 0644 utils/ia16/ia16_far_call_rewrite.py \
+            ../export/utils/ia16/ia16_far_call_rewrite.py
+          install -D -m 0644 utils/ia16/ia16_far_frame_rewrite.py \
+            ../export/utils/ia16/ia16_far_frame_rewrite.py
+          install -D -m 0644 utils/ia16/ia16_far_mc_rewrite.py \
+            ../export/utils/ia16/ia16_far_mc_rewrite.py
+          install -D -m 0644 utils/ia16/tests/test_apply_far_call_completion.py \
+            ../export/utils/ia16/tests/test_apply_far_call_completion.py
+
+          cat > ../export/MANIFEST <<'EOF'
+          source_head=4fe376ee5b2891d521ce8079212966c9fa4808b4
+          source_branch=feature/ia16-dogfood-unblock-49
+          input_hashes_verified=yes
+          codemod_tests_passed=yes
+          codemod_idempotent=yes
+          changed_files=3
+          EOF
+
+      - name: Upload materialized sources and evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ia16-branch49-materialized-source-signed
+          path: export/
+          if-no-files-found: error
+          retention-days: 14
