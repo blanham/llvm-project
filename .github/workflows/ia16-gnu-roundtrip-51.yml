@@ -1,0 +1,256 @@
+name: IA-16 GNU segmented-ELF round trip
+
+on:
+  push:
+    branches:
+      - automation/ia16-materialize-50-control
+    paths:
+      - '.github/workflows/ia16-gnu-roundtrip-51.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ia16-gnu-roundtrip-51
+  cancel-in-progress: false
+
+jobs:
+  build-probe-and-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out workflow control branch
+        uses: actions/checkout@v4
+        with:
+          ref: automation/ia16-materialize-50-control
+          fetch-depth: 1
+          show-progress: false
+
+      - name: Fetch and verify validated branch 50
+        shell: bash
+        run: |
+          set -euxo pipefail
+          base=4fe376ee5b2891d521ce8079212966c9fa4808b4
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch --no-tags --depth=2 origin \
+            refs/heads/feature/ia16-dogfood-unblock-50
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD^)" = "$base"
+          git diff-tree --no-commit-id --name-only -r HEAD | sort > actual
+          printf '%s\n' \
+            llvm/lib/Target/X86/X86FrameLowering.cpp \
+            llvm/lib/Target/X86/X86ISelLoweringCall.cpp \
+            llvm/lib/Target/X86/X86MCInstLower.cpp | sort > expected
+          diff -u expected actual
+
+      - name: Install GNU interoperability tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils cmake ninja-build python3
+          as --version | head -1
+          ld.bfd --version | head -1
+          objcopy --version | head -1
+          readelf --version | head -1
+
+      - name: Configure focused assertions build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S llvm -B build-ia16-gnu -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_ENABLE_ASSERTIONS=ON \
+            -DLLVM_ENABLE_PROJECTS='clang;lld' \
+            -DLLVM_TARGETS_TO_BUILD=X86 \
+            -DLLVM_INCLUDE_TESTS=ON \
+            -DLLVM_ENABLE_TERMINFO=OFF \
+            -DLLVM_ENABLE_ZLIB=OFF \
+            -DLLVM_ENABLE_ZSTD=OFF \
+            -DLLVM_ENABLE_LIBXML2=OFF \
+            -DLLVM_ENABLE_CURL=OFF \
+            -DLLVM_ENABLE_HTTPLIB=OFF \
+            -DLLVM_ENABLE_BINDINGS=OFF \
+            2>&1 | tee ia16-gnu-configure.log
+
+      - name: Build affected tools
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake --build build-ia16-gnu --parallel 4 --target \
+            clang llc llvm-mc llvm-objcopy llvm-objdump llvm-readobj ld.lld FileCheck \
+            2>&1 | tee ia16-gnu-build.log
+
+      - name: Install reusable mixed-toolchain validator
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p utils/ia16
+          cat > utils/ia16/validate_gnu_segmented_elf.sh <<'SCRIPT'
+          #!/usr/bin/env bash
+          # Validate that LLVM IA-16 GNU segmented-ELF objects survive GNU
+          # binutils copying and link correctly with a GNU-produced provider.
+          set -euo pipefail
+
+          if test "$#" -ne 1; then
+            echo "usage: $0 <LLVM build directory>" >&2
+            exit 2
+          fi
+
+          build="$(cd "$1" && pwd)"
+          root="$(cd "$(dirname "$0")/../.." && pwd)"
+          src="$root/clang/test/CodeGen/X86/ia16-far-call-address-spaces.c"
+          clang="$build/bin/clang"
+          llvm_objcopy="$build/bin/llvm-objcopy"
+          llvm_objdump="$build/bin/llvm-objdump"
+          llvm_readobj="$build/bin/llvm-readobj"
+          lld="$build/bin/ld.lld"
+
+          for tool in "$clang" "$llvm_objcopy" "$llvm_objdump" \
+                      "$llvm_readobj" "$lld" as ld.bfd objcopy readelf nm; do
+            command -v "$tool" >/dev/null 2>&1 || {
+              echo "missing required tool: $tool" >&2
+              exit 2
+            }
+          done
+
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+
+          cat > "$work/link.ld" <<'LDS'
+          SECTIONS
+          {
+            . = 0x0000;
+            .text : ALIGN(16) { *(.text .text.*) }
+            . = ALIGN(16);
+            .rodata : { *(.rodata .rodata.*) }
+            .data : ALIGN(16) { *(.data .data.*) }
+            .bss : ALIGN(16) { *(.bss .bss.*) *(COMMON) }
+            /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
+          }
+          LDS
+
+          models=(small medium compact large)
+          for model in "${models[@]}"; do
+            caller="$work/caller-$model.o"
+            "$clang" -target ia16-none-elf -mcpu=8086 \
+              -mmemory-model="$model" -O1 -ffreestanding -fno-unwind-tables \
+              -fno-asynchronous-unwind-tables -c "$src" -o "$caller"
+
+            "$llvm_readobj" --relocations --symbols --sections "$caller" \
+              > "$work/caller-$model.llvm.txt"
+            readelf -rWsW "$caller" > "$work/caller-$model.gnu.txt"
+            grep -Eq 'R_386_16' "$work/caller-$model.gnu.txt"
+            grep -Eq 'R_386_SUB16' "$work/caller-$model.gnu.txt"
+            grep -Eq 'R_386_SEG16' "$work/caller-$model.gnu.txt"
+
+            nm -u "$caller" | awk '{print $NF}' | LC_ALL=C sort -u \
+              > "$work/undefined-$model.txt"
+            python3 - "$work/undefined-$model.txt" \
+              "$work/provider-$model.s" <<'PY'
+          import pathlib
+          import sys
+
+          names = [line.strip() for line in pathlib.Path(sys.argv[1]).read_text().splitlines()
+                   if line.strip()]
+
+          def quote(name: str) -> str:
+              return '"' + name.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+          out = [
+              '.section .text.gnu_ia16_provider,"ax",@progbits',
+              '.p2align 4',
+              '.globl __ia16_gnu_provider_base',
+              '__ia16_gnu_provider_base:',
+          ]
+          auxiliaries = [name for name in names if name.endswith(('!', '&'))]
+          ordinary = [name for name in names if name not in auxiliaries]
+          for name in auxiliaries:
+              q = quote(name)
+              out += [f'.globl {q}', f'.set {q}, __ia16_gnu_provider_base']
+          for name in ordinary:
+              q = quote(name)
+              out += [f'.globl {q}', f'.type {q}, @function', f'{q}:', '  ret', f'.size {q}, .-{q}']
+          pathlib.Path(sys.argv[2]).write_text('\n'.join(out) + '\n')
+          PY
+            as --32 "$work/provider-$model.s" -o "$work/provider-$model.o"
+
+            objcopy "$caller" "$work/caller-$model.gnu-copy.o"
+            "$llvm_objcopy" "$work/provider-$model.o" \
+              "$work/provider-$model.llvm-copy.o"
+            readelf -rWsW "$work/caller-$model.gnu-copy.o" \
+              > "$work/caller-$model.gnu-copy.txt"
+            grep -Eq 'R_386_SUB16' "$work/caller-$model.gnu-copy.txt"
+            grep -Eq 'R_386_SEG16' "$work/caller-$model.gnu-copy.txt"
+
+            ld.bfd -m elf_i386 -nostdlib -T "$work/link.ld" \
+              -o "$work/linked-$model-bfd.elf" \
+              "$work/caller-$model.gnu-copy.o" \
+              "$work/provider-$model.llvm-copy.o"
+            "$lld" -m elf_i386 -nostdlib -T "$work/link.ld" \
+              -o "$work/linked-$model-lld.elf" \
+              "$work/caller-$model.gnu-copy.o" \
+              "$work/provider-$model.llvm-copy.o"
+
+            readelf -hSWsW "$work/linked-$model-bfd.elf" \
+              > "$work/linked-$model-bfd.gnu.txt"
+            "$llvm_readobj" --file-headers --sections --symbols \
+              "$work/linked-$model-bfd.elf" \
+              > "$work/linked-$model-bfd.llvm.txt"
+            "$llvm_objdump" -dr "$work/linked-$model-bfd.elf" \
+              > "$work/linked-$model-bfd.objdump"
+            grep -Eq 'lcall|call[[:space:]]+far' \
+              "$work/linked-$model-bfd.objdump"
+
+            readelf -hSWsW "$work/linked-$model-lld.elf" \
+              > "$work/linked-$model-lld.gnu.txt"
+            "$llvm_readobj" --file-headers --sections --symbols \
+              "$work/linked-$model-lld.elf" \
+              > "$work/linked-$model-lld.llvm.txt"
+          done
+
+          if test -n "${IA16_GNU_EVIDENCE_DIR:-}"; then
+            mkdir -p "$IA16_GNU_EVIDENCE_DIR"
+            cp -a "$work"/. "$IA16_GNU_EVIDENCE_DIR"/
+          fi
+          SCRIPT
+          chmod +x utils/ia16/validate_gnu_segmented_elf.sh
+
+      - name: Run mixed LLVM/GNU round trip in every memory model
+        shell: bash
+        env:
+          IA16_GNU_EVIDENCE_DIR: ${{ github.workspace }}/ia16-gnu-evidence
+        run: |
+          set -o pipefail
+          utils/ia16/validate_gnu_segmented_elf.sh build-ia16-gnu \
+            2>&1 | tee ia16-gnu-roundtrip.log
+
+      - name: Publish validated interoperability script
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git diff --check
+          git add utils/ia16/validate_gnu_segmented_elf.sh
+          test "$(git diff --cached --name-only | wc -l)" -eq 1
+          git commit -m 'test(ia16): add GNU segmented-ELF round trip [skip ci]'
+          git push --force origin \
+            HEAD:refs/heads/feature/ia16-dogfood-unblock-51
+
+      - name: Preserve diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ia16-gnu-roundtrip-51-${{ github.run_id }}
+          path: |
+            ia16-gnu-configure.log
+            ia16-gnu-build.log
+            ia16-gnu-roundtrip.log
+            ia16-gnu-evidence/
+            actual
+            expected
+          if-no-files-found: ignore
+          retention-days: 14
