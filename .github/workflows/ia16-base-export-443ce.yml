@@ -1,0 +1,44 @@
+name: IA-16 pinned backend source export
+
+on:
+  push:
+    branches:
+      - automation/ia16-base-export-443ce
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: automation/ia16-base-export-443ce
+          fetch-depth: 1
+
+      - name: Verify and package pinned source files
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p export/llvm/lib/Target/X86
+          files=(
+            llvm/lib/Target/X86/X86ISelLoweringCall.cpp
+            llvm/lib/Target/X86/X86FrameLowering.cpp
+            llvm/lib/Target/X86/X86MCInstLower.cpp
+          )
+          for file in "${files[@]}"; do
+            install -m 0644 "$file" "export/$file"
+            git hash-object "$file" | tee -a export/BLOB_SHA1S
+          done
+          git rev-parse HEAD^ > export/UPSTREAM_BASE_COMMIT
+          tar -C export -czf ia16-pinned-backend-source.tar.gz .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ia16-pinned-backend-source-443ce
+          path: ia16-pinned-backend-source.tar.gz
+          if-no-files-found: error
+          retention-days: 7
