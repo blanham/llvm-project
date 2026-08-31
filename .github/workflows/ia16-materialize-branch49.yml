@@ -1,0 +1,114 @@
+name: IA-16 materialize branch 49 source closure
+
+on:
+  push:
+    branches:
+      - automation/ia16-materialize-branch49
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  materialize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out exact ChickenParts branch 49 source
+        uses: actions/checkout@v4
+        with:
+          repository: ChickenParts/llvm
+          ref: 4fe376ee5b2891d521ce8079212966c9fa4808b4
+          fetch-depth: 1
+          filter: blob:none
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            llvm/lib/Target/X86/X86FrameLowering.cpp
+            llvm/lib/Target/X86/X86ISelLoweringCall.cpp
+            llvm/lib/Target/X86/X86MCInstLower.cpp
+            utils/ia16
+          persist-credentials: false
+
+      - name: Verify, materialize twice, and package evidence
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          expected_head=4fe376ee5b2891d521ce8079212966c9fa4808b4
+          test "$(git rev-parse HEAD)" = "$expected_head"
+
+          paths=(
+            llvm/lib/Target/X86/X86ISelLoweringCall.cpp
+            llvm/lib/Target/X86/X86FrameLowering.cpp
+            llvm/lib/Target/X86/X86MCInstLower.cpp
+          )
+          expected=(
+            3f8d0f309fd0750706334b910fcc240fe60d777c
+            f09820a2e9e577fd7784a58b69754fcc9c146526
+            374290770c5bf4e9fc3e4021622a84d8c79e0b6b
+          )
+
+          rm -rf export
+          mkdir -p export
+          printf '%s\n' "$expected_head" > export/SOURCE_HEAD
+          : > export/BASELINE_BLOB_SHA1S
+          for i in "${!paths[@]}"; do
+            actual="$(git hash-object "${paths[$i]}")"
+            test "$actual" = "${expected[$i]}"
+            printf '%s  %s\n' "$actual" "${paths[$i]}" >> export/BASELINE_BLOB_SHA1S
+          done
+
+          python3 -m py_compile \
+            utils/ia16/apply_far_call_completion.py \
+            utils/ia16/ia16_far_call_rewrite.py \
+            utils/ia16/ia16_far_frame_rewrite.py \
+            utils/ia16/ia16_far_mc_rewrite.py \
+            utils/ia16/tests/test_apply_far_call_completion.py
+          python3 utils/ia16/tests/test_apply_far_call_completion.py -v \
+            2>&1 | tee export/CODEMOD_TESTS.log
+          python3 utils/ia16/apply_far_call_completion.py --check
+          python3 utils/ia16/apply_far_call_completion.py
+          git diff --check
+
+          mapfile -t changed < <(git diff --name-only)
+          test "${#changed[@]}" -eq 3
+          printf '%s\n' "${changed[@]}" | grep -Fx llvm/lib/Target/X86/X86ISelLoweringCall.cpp
+          printf '%s\n' "${changed[@]}" | grep -Fx llvm/lib/Target/X86/X86FrameLowering.cpp
+          printf '%s\n' "${changed[@]}" | grep -Fx llvm/lib/Target/X86/X86MCInstLower.cpp
+
+          : > export/GENERATED_BLOB_SHA1S
+          : > export/GENERATED_SHA256SUMS
+          for path in "${paths[@]}"; do
+            printf '%s  %s\n' "$(git hash-object "$path")" "$path" >> export/GENERATED_BLOB_SHA1S
+            sha256sum "$path" >> export/GENERATED_SHA256SUMS
+            install -D -m 0644 "$path" "export/$path"
+          done
+          cp export/GENERATED_BLOB_SHA1S /tmp/generated-before
+          cp export/GENERATED_SHA256SUMS /tmp/generated-sha256-before
+
+          # The second application must be a byte-for-byte no-op.
+          python3 utils/ia16/apply_far_call_completion.py
+          : > /tmp/generated-after
+          : > /tmp/generated-sha256-after
+          for path in "${paths[@]}"; do
+            printf '%s  %s\n' "$(git hash-object "$path")" "$path" >> /tmp/generated-after
+            sha256sum "$path" >> /tmp/generated-sha256-after
+          done
+          cmp /tmp/generated-before /tmp/generated-after
+          cmp /tmp/generated-sha256-before /tmp/generated-sha256-after
+
+          git diff --binary -- "${paths[@]}" > export/ia16-far-call-materialized.patch
+          git diff --stat -- "${paths[@]}" > export/DIFFSTAT
+          git status --short > export/GIT_STATUS
+          printf 'branch49=%s\n' "$expected_head" > export/MANIFEST
+          printf 'codemod_idempotent=yes\n' >> export/MANIFEST
+          printf 'changed_files=3\n' >> export/MANIFEST
+
+      - name: Upload materialized backend files and evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ia16-branch49-materialized-source
+          path: export/
+          if-no-files-found: error
+          retention-days: 14
