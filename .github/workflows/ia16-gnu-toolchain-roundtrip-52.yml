@@ -1,0 +1,333 @@
+name: IA-16 GNU toolchain segmented-ELF round trip
+
+on:
+  push:
+    branches:
+      - automation/ia16-materialize-50-control
+    paths:
+      - '.github/workflows/ia16-gnu-toolchain-roundtrip-52.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ia16-gnu-toolchain-roundtrip-52
+  cancel-in-progress: false
+
+jobs:
+  build-both-toolchains-and-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+
+    steps:
+      - name: Check out workflow control branch
+        uses: actions/checkout@v4
+        with:
+          ref: automation/ia16-materialize-50-control
+          fetch-depth: 1
+          show-progress: false
+
+      - name: Select the newest validated source branch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git ls-remote --exit-code --heads origin \
+               refs/heads/feature/ia16-dogfood-unblock-51 >/dev/null 2>&1; then
+            git fetch --no-tags --depth=2 origin \
+              refs/heads/feature/ia16-dogfood-unblock-51
+          else
+            git fetch --no-tags --depth=2 origin \
+              refs/heads/feature/ia16-dogfood-unblock-50
+          fi
+          git checkout --detach FETCH_HEAD
+
+      - name: Install build prerequisites
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bison build-essential cmake flex libgmp-dev libmpc-dev \
+            libmpfr-dev ninja-build python3 texinfo
+
+      - name: Build GNU IA-16 binutils
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --filter=blob:none --depth=1 --branch ia16 \
+            https://github.com/tkchia/binutils-gdb.git \
+            gnu-binutils-ia16
+          git -C gnu-binutils-ia16 rev-parse HEAD \
+            | tee gnu-binutils-ia16.commit
+          mkdir gnu-binutils-ia16-build gnu-binutils-ia16-prefix
+          cd gnu-binutils-ia16-build
+          ../gnu-binutils-ia16/configure \
+            --target=ia16-elf \
+            --prefix="${GITHUB_WORKSPACE}/gnu-binutils-ia16-prefix" \
+            --disable-gdb \
+            --disable-gdbserver \
+            --disable-gprofng \
+            --disable-nls \
+            --disable-sim \
+            --disable-werror \
+            2>&1 | tee ../gnu-binutils-configure.log
+          make -j4 all-binutils all-gas all-ld \
+            2>&1 | tee ../gnu-binutils-build.log
+          make install-binutils install-gas install-ld \
+            2>&1 | tee ../gnu-binutils-install.log
+          cd ..
+          test -x gnu-binutils-ia16-prefix/bin/ia16-elf-as
+          test -x gnu-binutils-ia16-prefix/bin/ia16-elf-ld
+          test -x gnu-binutils-ia16-prefix/bin/ia16-elf-objcopy
+          test -x gnu-binutils-ia16-prefix/bin/ia16-elf-readelf
+          test -x gnu-binutils-ia16-prefix/bin/ia16-elf-nm
+
+      - name: Configure focused LLVM assertions build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S llvm -B build-ia16-gnu-toolchain -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_ENABLE_ASSERTIONS=ON \
+            -DLLVM_ENABLE_PROJECTS='clang;lld' \
+            -DLLVM_TARGETS_TO_BUILD=X86 \
+            -DLLVM_INCLUDE_TESTS=ON \
+            -DLLVM_ENABLE_TERMINFO=OFF \
+            -DLLVM_ENABLE_ZLIB=OFF \
+            -DLLVM_ENABLE_ZSTD=OFF \
+            -DLLVM_ENABLE_LIBXML2=OFF \
+            -DLLVM_ENABLE_CURL=OFF \
+            -DLLVM_ENABLE_HTTPLIB=OFF \
+            -DLLVM_ENABLE_BINDINGS=OFF \
+            2>&1 | tee ia16-gnu-toolchain-configure.log
+
+      - name: Build affected LLVM tools
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake --build build-ia16-gnu-toolchain --parallel 4 --target \
+            clang llc llvm-mc llvm-objcopy llvm-objdump llvm-readobj ld.lld FileCheck \
+            2>&1 | tee ia16-gnu-toolchain-build.log
+
+      - name: Install override-aware interoperability validator
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p utils/ia16
+          cat > utils/ia16/validate_gnu_segmented_elf.sh <<'SCRIPT'
+          #!/usr/bin/env bash
+          # Validate LLVM IA-16 GNU segmented-ELF against GNU IA-16 binutils.
+          # Tool paths may be overridden for a cross-toolchain installation.
+          set -euo pipefail
+
+          if test "$#" -ne 1; then
+            echo "usage: $0 <LLVM build directory>" >&2
+            exit 2
+          fi
+
+          build="$(cd "$1" && pwd)"
+          root="$(cd "$(dirname "$0")/../.." && pwd)"
+          src="$root/clang/test/CodeGen/X86/ia16-far-call-address-spaces.c"
+          clang="${LLVM_CLANG:-$build/bin/clang}"
+          llvm_objcopy="${LLVM_OBJCOPY:-$build/bin/llvm-objcopy}"
+          llvm_objdump="${LLVM_OBJDUMP:-$build/bin/llvm-objdump}"
+          llvm_readobj="${LLVM_READOBJ:-$build/bin/llvm-readobj}"
+          lld="${LLVM_LLD:-$build/bin/ld.lld}"
+          gnu_as="${GNU_AS:-as}"
+          gnu_ld="${GNU_LD:-ld.bfd}"
+          gnu_objcopy="${GNU_OBJCOPY:-objcopy}"
+          gnu_readelf="${GNU_READELF:-readelf}"
+          gnu_nm="${GNU_NM:-nm}"
+
+          for tool in "$clang" "$llvm_objcopy" "$llvm_objdump" \
+                      "$llvm_readobj" "$lld" "$gnu_as" "$gnu_ld" \
+                      "$gnu_objcopy" "$gnu_readelf" "$gnu_nm"; do
+            test -x "$tool" || command -v "$tool" >/dev/null 2>&1 || {
+              echo "missing required tool: $tool" >&2
+              exit 2
+            }
+          done
+
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+
+          cat > "$work/link.ld" <<'LDS'
+          SECTIONS
+          {
+            . = 0x0000;
+            .text : ALIGN(16) { *(.text .text.*) }
+            . = ALIGN(16);
+            .rodata : { *(.rodata .rodata.*) }
+            .data : ALIGN(16) { *(.data .data.*) }
+            .bss : ALIGN(16) { *(.bss .bss.*) *(COMMON) }
+            /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
+          }
+          LDS
+
+          models=(small medium compact large)
+          for model in "${models[@]}"; do
+            caller="$work/caller-$model.o"
+            "$clang" -target ia16-none-elf -mcpu=8086 \
+              -mmemory-model="$model" -O1 -ffreestanding -fno-unwind-tables \
+              -fno-asynchronous-unwind-tables -c "$src" -o "$caller"
+
+            "$llvm_readobj" --relocations --symbols --sections "$caller" \
+              > "$work/caller-$model.llvm.txt"
+            "$gnu_readelf" -rWsW "$caller" > "$work/caller-$model.gnu.txt"
+            grep -Eq 'R_386_16' "$work/caller-$model.gnu.txt"
+            grep -Eq 'R_386_SUB16' "$work/caller-$model.gnu.txt"
+            grep -Eq 'R_386_SEG16' "$work/caller-$model.gnu.txt"
+
+            "$gnu_nm" -u "$caller" | awk '{print $NF}' | LC_ALL=C sort -u \
+              > "$work/undefined-$model.txt"
+            python3 - "$work/undefined-$model.txt" \
+              "$work/provider-$model.s" <<'PY'
+          import pathlib
+          import sys
+
+          names = [line.strip() for line in pathlib.Path(sys.argv[1]).read_text().splitlines()
+                   if line.strip()]
+
+          def quote(name: str) -> str:
+              return '"' + name.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+          out = [
+              '.code16',
+              '.section .text.gnu_ia16_provider,"ax",@progbits',
+              '.p2align 4',
+              '.globl __ia16_gnu_provider_base',
+              '__ia16_gnu_provider_base:',
+          ]
+          auxiliaries = [name for name in names if name.endswith(('!', '&'))]
+          ordinary = [name for name in names if name not in auxiliaries]
+          for name in auxiliaries:
+              q = quote(name)
+              out += [f'.globl {q}', f'.set {q}, __ia16_gnu_provider_base']
+          for name in ordinary:
+              q = quote(name)
+              out += [f'.globl {q}', f'.type {q}, @function', f'{q}:', '  ret', f'.size {q}, .-{q}']
+          pathlib.Path(sys.argv[2]).write_text('\n'.join(out) + '\n')
+          PY
+            "$gnu_as" "$work/provider-$model.s" \
+              -o "$work/provider-$model.o"
+
+            "$gnu_objcopy" "$caller" "$work/caller-$model.gnu-copy.o"
+            "$llvm_objcopy" "$work/provider-$model.o" \
+              "$work/provider-$model.llvm-copy.o"
+            "$gnu_readelf" -rWsW "$work/caller-$model.gnu-copy.o" \
+              > "$work/caller-$model.gnu-copy.txt"
+            grep -Eq 'R_386_SUB16' "$work/caller-$model.gnu-copy.txt"
+            grep -Eq 'R_386_SEG16' "$work/caller-$model.gnu-copy.txt"
+
+            "$gnu_ld" -nostdlib -T "$work/link.ld" \
+              -o "$work/linked-$model-bfd.elf" \
+              "$work/caller-$model.gnu-copy.o" \
+              "$work/provider-$model.llvm-copy.o"
+            "$lld" -m elf_i386 -nostdlib -T "$work/link.ld" \
+              -o "$work/linked-$model-lld.elf" \
+              "$work/caller-$model.gnu-copy.o" \
+              "$work/provider-$model.llvm-copy.o"
+
+            "$gnu_readelf" -hSWsW "$work/linked-$model-bfd.elf" \
+              > "$work/linked-$model-bfd.gnu.txt"
+            "$llvm_readobj" --file-headers --sections --symbols \
+              "$work/linked-$model-bfd.elf" \
+              > "$work/linked-$model-bfd.llvm.txt"
+            "$llvm_objdump" -dr "$work/linked-$model-bfd.elf" \
+              > "$work/linked-$model-bfd.objdump"
+            grep -Eq 'lcall|call[[:space:]]+far' \
+              "$work/linked-$model-bfd.objdump"
+
+            "$gnu_readelf" -hSWsW "$work/linked-$model-lld.elf" \
+              > "$work/linked-$model-lld.gnu.txt"
+            "$llvm_readobj" --file-headers --sections --symbols \
+              "$work/linked-$model-lld.elf" \
+              > "$work/linked-$model-lld.llvm.txt"
+          done
+
+          if test -n "${IA16_GNU_EVIDENCE_DIR:-}"; then
+            mkdir -p "$IA16_GNU_EVIDENCE_DIR"
+            cp -a "$work"/. "$IA16_GNU_EVIDENCE_DIR"/
+          fi
+          SCRIPT
+          chmod +x utils/ia16/validate_gnu_segmented_elf.sh
+
+      - name: Run canonical GNU IA-16 interoperability matrix
+        shell: bash
+        env:
+          GNU_AS: ${{ github.workspace }}/gnu-binutils-ia16-prefix/bin/ia16-elf-as
+          GNU_LD: ${{ github.workspace }}/gnu-binutils-ia16-prefix/bin/ia16-elf-ld
+          GNU_OBJCOPY: ${{ github.workspace }}/gnu-binutils-ia16-prefix/bin/ia16-elf-objcopy
+          GNU_READELF: ${{ github.workspace }}/gnu-binutils-ia16-prefix/bin/ia16-elf-readelf
+          GNU_NM: ${{ github.workspace }}/gnu-binutils-ia16-prefix/bin/ia16-elf-nm
+          IA16_GNU_EVIDENCE_DIR: ${{ github.workspace }}/ia16-gnu-toolchain-evidence
+        run: |
+          set -o pipefail
+          utils/ia16/validate_gnu_segmented_elf.sh \
+            build-ia16-gnu-toolchain \
+            2>&1 | tee ia16-gnu-toolchain-roundtrip.log
+
+      - name: Record the validated GNU source revision
+        shell: bash
+        run: |
+          set -euxo pipefail
+          commit="$(cat gnu-binutils-ia16.commit)"
+          cat > llvm/docs/IA16GNUSegmentedELFInterop.md <<EOF
+          # IA-16 GNU segmented-ELF interoperability
+
+          The reusable validation entry point is
+          \`utils/ia16/validate_gnu_segmented_elf.sh\\u0060. It compiles the
+          address-space far-call fixture in the small, medium, compact, and large
+          memory models at the 8086 CPU floor, copies LLVM and GNU objects through
+          the opposite toolchain, and links every pair with both GNU ld and LLD.
+
+          The acceptance run for this source revision built
+          \`https://github.com/tkchia/binutils-gdb.git\\u0060 branch \`ia16\\u0060 at:
+
+          \\u0060\\u0060\\u0060text
+          ${commit}
+          \\u0060\\u0060\\u0060
+
+          The script accepts \\u0060GNU_AS\\u0060, \\u0060GNU_LD\\u0060,
+          \\u0060GNU_OBJCOPY\\u0060, \\u0060GNU_READELF\\u0060, and \\u0060GNU_NM\\u0060
+          overrides so the same test can be repeated against another GNU IA-16
+          installation without changing the repository.
+          EOF
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('llvm/docs/IA16GNUSegmentedELFInterop.md')
+          p.write_text(p.read_text().replace('\\u0060', '`'))
+          PY
+
+      - name: Publish canonical GNU interoperability closure
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git diff --check
+          git add \
+            utils/ia16/validate_gnu_segmented_elf.sh \
+            llvm/docs/IA16GNUSegmentedELFInterop.md
+          test "$(git diff --cached --name-only | wc -l)" -eq 2
+          git commit -m 'test(ia16): close GNU segmented-ELF interoperability [skip ci]'
+          git push --force origin \
+            HEAD:refs/heads/feature/ia16-dogfood-unblock-52
+
+      - name: Preserve diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ia16-gnu-toolchain-roundtrip-52-${{ github.run_id }}
+          path: |
+            gnu-binutils-ia16.commit
+            gnu-binutils-configure.log
+            gnu-binutils-build.log
+            gnu-binutils-install.log
+            ia16-gnu-toolchain-configure.log
+            ia16-gnu-toolchain-build.log
+            ia16-gnu-toolchain-roundtrip.log
+            ia16-gnu-toolchain-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
